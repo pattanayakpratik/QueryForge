@@ -2,12 +2,16 @@
 
 import unittest
 from sqlalchemy import text
-from app.database import get_target_engine
+from app.database import get_target_engine, close_target_engines
 from scripts.seed_demo_ecommerce_db import seed_ecommerce_database
 
 
 class TestDemoSeedDatabase(unittest.IsolatedAsyncioTestCase):
     """Unit test for demo e-commerce seed script."""
+
+    async def asyncTearDown(self):
+        """Ensure all target engines are cleanly closed."""
+        await close_target_engines()
 
     async def test_seed_ecommerce_database_populates_5_tables(self):
         """Seed script should create and populate customers, products, orders, items, and refunds."""
@@ -35,15 +39,6 @@ class TestDemoSeedDatabase(unittest.IsolatedAsyncioTestCase):
             # Check refunds
             ref_res = await conn.execute(text("SELECT COUNT(*) FROM refunds"))
             self.assertGreater(ref_res.scalar(), 0)
-
-        # Cleanup
-        await engine.dispose()
-        import os
-        if os.path.exists("./test_ecommerce_seed.db"):
-            try:
-                os.remove("./test_ecommerce_seed.db")
-            except Exception:
-                pass
 
 
 if __name__ == "__main__":

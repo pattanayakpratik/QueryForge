@@ -1,6 +1,7 @@
 """Tests for metadata models, encryption helpers, and database persistence."""
 
 import unittest
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -12,8 +13,13 @@ class TestMetadataModels(unittest.IsolatedAsyncioTestCase):
     """Integration test suite for internal metadata store."""
 
     async def asyncSetUp(self):
-        """Set up in-memory async SQLite engine."""
-        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+        """Set up in-memory async SQLite engine with StaticPool."""
+        self.engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+            echo=False,
+        )
         self.session_maker = async_sessionmaker(
             bind=self.engine,
             class_=AsyncSession,

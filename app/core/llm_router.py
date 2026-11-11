@@ -36,8 +36,12 @@ def extract_sql_from_markdown(raw_text: str) -> str:
 class LLMRouter:
     """Orchestrates query synthesis across Groq and Gemini with automated failover."""
 
-    def __init__(self, http_client: Optional[httpx.AsyncClient] = None):
-        self._settings = get_settings()
+    def __init__(
+        self,
+        http_client: Optional[httpx.AsyncClient] = None,
+        settings: Optional[Any] = None,
+    ):
+        self._settings = settings or get_settings()
         self._http_client = http_client
 
     async def generate_sql(

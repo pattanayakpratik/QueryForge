@@ -2,10 +2,11 @@
 
 import unittest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.main import app
 from app.models.metadata import Base, DataSource
-from app.database import get_metadata_db, encrypt_connection_uri, init_metadata_db
+from app.database import get_metadata_db, encrypt_connection_uri, init_metadata_db, close_target_engines
 
 
 class TestAPIEndpoints(unittest.IsolatedAsyncioTestCase):
@@ -13,7 +14,12 @@ class TestAPIEndpoints(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         """Set up in-memory SQLite session override for testing."""
-        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+        self.engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+            echo=False,
+        )
         self.session_maker = async_sessionmaker(
             bind=self.engine,
             class_=AsyncSession,
@@ -35,6 +41,7 @@ class TestAPIEndpoints(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides.clear()
         await self.client.aclose()
         await self.engine.dispose()
+        await close_target_engines()
 
     async def test_health_and_root(self):
         """Root and health endpoints should return 200 OK."""

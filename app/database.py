@@ -2,8 +2,9 @@
 
 import base64
 import os
-from typing import AsyncGenerator, Dict
+from typing import AsyncGenerator, Dict, Optional
 from cryptography.fernet import Fernet
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,23 +16,37 @@ from app.models.metadata import Base
 
 # Cache for dynamic target DB engines
 _target_engine_pool: Dict[str, AsyncEngine] = {}
+_metadata_engine: Optional[AsyncEngine] = None
+_metadata_session_maker: Optional[async_sessionmaker] = None
 
-# Internal metadata engine and sessionmaker
 settings = get_settings()
 
-metadata_engine: AsyncEngine = create_async_engine(
-    settings.metadata_database_url,
-    echo=False,
-    future=True,
-)
 
-async_session_maker = async_sessionmaker(
-    bind=metadata_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autocommit=False,
-    autoflush=False,
-)
+def get_metadata_engine() -> AsyncEngine:
+    """Retrieve or initialize the async metadata database engine using NullPool for asyncio safety."""
+    global _metadata_engine, _metadata_session_maker
+    if _metadata_engine is None:
+        _metadata_engine = create_async_engine(
+            settings.metadata_database_url,
+            poolclass=NullPool,
+            echo=False,
+            future=True,
+        )
+        _metadata_session_maker = async_sessionmaker(
+            bind=_metadata_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autocommit=False,
+            autoflush=False,
+        )
+    return _metadata_engine
+
+
+def get_metadata_session_maker() -> async_sessionmaker:
+    """Retrieve the sessionmaker bound to the metadata engine."""
+    get_metadata_engine()
+    assert _metadata_session_maker is not None
+    return _metadata_session_maker
 
 
 def _get_or_create_cipher() -> Fernet:
@@ -62,13 +77,15 @@ def decrypt_connection_uri(encrypted_uri: str) -> str:
 
 async def init_metadata_db() -> None:
     """Initialize metadata database tables if they do not exist."""
-    async with metadata_engine.begin() as conn:
+    engine = get_metadata_engine()
+    async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
 async def get_metadata_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency yielding an async metadata database session."""
-    async with async_session_maker() as session:
+    session_maker = get_metadata_session_maker()
+    async with session_maker() as session:
         try:
             yield session
         finally:
@@ -78,10 +95,10 @@ async def get_metadata_db() -> AsyncGenerator[AsyncSession, None]:
 def get_target_engine(connection_uri: str) -> AsyncEngine:
     """Retrieve or create an async engine for a target user database."""
     if connection_uri not in _target_engine_pool:
-        # Configure pool with safe defaults
+        # Configure with NullPool to prevent event loop connection leaks across tests
         engine = create_async_engine(
             connection_uri,
-            pool_pre_ping=True,
+            poolclass=NullPool,
             echo=False,
             future=True,
         )
@@ -91,6 +108,12 @@ def get_target_engine(connection_uri: str) -> AsyncEngine:
 
 async def close_target_engines() -> None:
     """Dispose of all cached target database engines during shutdown."""
+    global _metadata_engine, _metadata_session_maker
+    if _metadata_engine is not None:
+        await _metadata_engine.dispose()
+        _metadata_engine = None
+        _metadata_session_maker = None
+
     for uri, engine in list(_target_engine_pool.items()):
         await engine.dispose()
     _target_engine_pool.clear()

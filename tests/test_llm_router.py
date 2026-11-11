@@ -40,7 +40,7 @@ class TestLLMRouter(unittest.IsolatedAsyncioTestCase):
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.return_value = mock_response
 
-        router = LLMRouter(http_client=mock_client)
+        router = LLMRouter(http_client=mock_client, settings=mock_settings)
         result = await router.generate_sql("List all customers")
 
         self.assertEqual(result.provider, "GROQ")
@@ -81,7 +81,7 @@ class TestLLMRouter(unittest.IsolatedAsyncioTestCase):
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.side_effect = mock_post
 
-        router = LLMRouter(http_client=mock_client)
+        router = LLMRouter(http_client=mock_client, settings=mock_settings)
         result = await router.generate_sql("List all orders")
 
         self.assertEqual(result.provider, "GEMINI")
@@ -118,7 +118,7 @@ class TestLLMRouter(unittest.IsolatedAsyncioTestCase):
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.side_effect = mock_post
 
-        router = LLMRouter(http_client=mock_client)
+        router = LLMRouter(http_client=mock_client, settings=mock_settings)
         result = await router.generate_sql("List products")
 
         self.assertEqual(result.provider, "GEMINI")
@@ -134,7 +134,7 @@ class TestLLMRouter(unittest.IsolatedAsyncioTestCase):
         )
         mock_get_settings.return_value = mock_settings
 
-        router = LLMRouter()
+        router = LLMRouter(settings=mock_settings)
         result = await router.generate_sql("SELECT test")
 
         self.assertEqual(result.provider, "MOCK_FALLBACK")
