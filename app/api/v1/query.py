@@ -1,19 +1,18 @@
-"""Query endpoints for natural language Text-to-SQL execution."""
+"""Query endpoints for natural language Text-to-SQL execution and SSE live streaming."""
 
-import time
+import json
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_metadata_db, decrypt_connection_uri, get_target_engine
+from app.database import get_metadata_db, decrypt_connection_uri
 from app.models.metadata import DataSource, QueryAuditLog
 from app.schemas.metadata import QueryAskRequest, QueryAskResponse
-from app.core.sql_guard import validate_and_sanitize_sql, SQLGuardError
-from app.core.llm_router import LLMRouter
+from app.core.agent_loop import AgentLoop, AgentExecutionResult
 
 router = APIRouter()
-llm_router = LLMRouter()
+agent_loop = AgentLoop()
 
 
 @router.post("/ask", response_model=QueryAskResponse)
@@ -21,7 +20,7 @@ async def ask_query(
     payload: QueryAskRequest,
     db: AsyncSession = Depends(get_metadata_db),
 ) -> QueryAskResponse:
-    """Execute natural language query through LLM router, AST firewall, and target database."""
+    """Execute natural language query through Schema RAG, AST firewall, and self-healing loop."""
     ds = await db.get(DataSource, payload.datasource_id)
     if not ds:
         raise HTTPException(
@@ -29,98 +28,96 @@ async def ask_query(
             detail=f"Data source '{payload.datasource_id}' does not exist.",
         )
 
-    start_time = time.perf_counter()
     target_uri = decrypt_connection_uri(ds.connection_uri_encrypted)
-    target_engine = get_target_engine(target_uri)
 
-    # 1. Synthesize SQL via LLMRouter
-    llm_result = await llm_router.generate_sql(prompt=payload.question)
-    raw_sql = llm_result.cleaned_sql
+    result: AgentExecutionResult = await agent_loop.execute_query(
+        datasource_id=ds.id,
+        question=payload.question,
+        connection_uri=target_uri,
+        dialect=ds.dialect,
+    )
 
-    # 2. Compile-time AST Firewall check
-    try:
-        sanitized_sql = validate_and_sanitize_sql(raw_sql, dialect=ds.dialect)
-    except SQLGuardError as guard_err:
-        # Audit the AST block
-        execution_time = (time.perf_counter() - start_time) * 1000.0
-        audit_entry = QueryAuditLog(
-            datasource_id=ds.id,
-            user_question=payload.question,
-            generated_sql=raw_sql,
-            self_heal_attempts=0,
-            error_history=[{"error": guard_err.message, "code": guard_err.code}],
-            execution_time_ms=round(execution_time, 2),
-            provider_used=llm_result.provider,
-            status="BLOCKED_AST",
-        )
-        db.add(audit_entry)
-        await db.commit()
+    # Persist execution telemetry to internal audit logs
+    audit_entry = QueryAuditLog(
+        datasource_id=ds.id,
+        user_question=payload.question,
+        generated_sql=result.sql,
+        self_heal_attempts=result.self_heal_attempts,
+        error_history=result.error_history,
+        explain_cost=result.explain_cost,
+        execution_time_ms=result.execution_time_ms,
+        row_count=result.row_count,
+        provider_used=result.provider_used,
+        status=result.status,
+    )
+    db.add(audit_entry)
+    await db.commit()
 
+    if result.status == "BLOCKED_AST":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "message": guard_err.message,
-                "code": guard_err.code,
+                "message": result.summary,
                 "status": "BLOCKED_AST",
+                "sql": result.sql,
+            },
+        )
+    elif result.status == "FAILED_EXECUTION":
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": result.summary,
+                "status": "FAILED_EXECUTION",
+                "error_history": result.error_history,
             },
         )
 
-    # 3. Execute in sandboxed target engine
-    rows_data: List[Dict[str, Any]] = []
-    columns: List[str] = []
+    return QueryAskResponse(
+        sql=result.sql,
+        columns=result.columns,
+        rows=result.rows,
+        row_count=result.row_count,
+        execution_time_ms=result.execution_time_ms,
+        explain_cost=result.explain_cost,
+        provider_used=result.provider_used,
+        self_heal_attempts=result.self_heal_attempts,
+        status="SUCCESS",
+        chart_config=result.chart_config,
+        summary=result.summary,
+    )
 
-    try:
-        async with target_engine.connect() as conn:
-            cursor = await conn.execute(text(sanitized_sql))
-            if cursor.returns_rows:
-                columns = list(cursor.keys())
-                fetched_rows = cursor.fetchall()
-                for row in fetched_rows:
-                    rows_data.append(dict(zip(columns, row)))
 
-        execution_time = (time.perf_counter() - start_time) * 1000.0
-        audit_entry = QueryAuditLog(
-            datasource_id=ds.id,
-            user_question=payload.question,
-            generated_sql=sanitized_sql,
-            self_heal_attempts=0,
-            error_history=[],
-            execution_time_ms=round(execution_time, 2),
-            row_count=len(rows_data),
-            provider_used=llm_result.provider,
-            status="SUCCESS",
-        )
-        db.add(audit_entry)
-        await db.commit()
-
-        return QueryAskResponse(
-            sql=sanitized_sql,
-            columns=columns,
-            rows=rows_data,
-            row_count=len(rows_data),
-            execution_time_ms=round(execution_time, 2),
-            provider_used=llm_result.provider,
-            self_heal_attempts=0,
-            status="SUCCESS",
-            summary=f"Query successfully returned {len(rows_data)} records.",
-        )
-
-    except Exception as exc:
-        execution_time = (time.perf_counter() - start_time) * 1000.0
-        audit_entry = QueryAuditLog(
-            datasource_id=ds.id,
-            user_question=payload.question,
-            generated_sql=sanitized_sql,
-            self_heal_attempts=0,
-            error_history=[{"error": str(exc)}],
-            execution_time_ms=round(execution_time, 2),
-            provider_used=llm_result.provider,
-            status="FAILED_EXECUTION",
-        )
-        db.add(audit_entry)
-        await db.commit()
-
+@router.post("/stream")
+async def stream_query_execution(
+    payload: QueryAskRequest,
+    db: AsyncSession = Depends(get_metadata_db),
+):
+    """Server-Sent Events (SSE) streaming endpoint showing live step-by-step agent reasoning."""
+    ds = await db.get(DataSource, payload.datasource_id)
+    if not ds:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Execution error on target database: {str(exc)}",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Data source '{payload.datasource_id}' does not exist.",
         )
+
+    target_uri = decrypt_connection_uri(ds.connection_uri_encrypted)
+
+    async def event_generator():
+        async for event in agent_loop.execute_query_stream(
+            datasource_id=ds.id,
+            question=payload.question,
+            connection_uri=target_uri,
+            dialect=ds.dialect,
+        ):
+            event_json = json.dumps(event.model_dump())
+            yield f"data: {event_json}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

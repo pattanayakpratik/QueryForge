@@ -1,14 +1,17 @@
 """Data source registration and schema introspection endpoints."""
 
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_metadata_db, encrypt_connection_uri
+from app.database import get_metadata_db, encrypt_connection_uri, decrypt_connection_uri
 from app.models.metadata import DataSource
 from app.schemas.metadata import DataSourceCreate, DataSourceResponse
+from app.core.schema_indexer import SchemaIndexer
 
 router = APIRouter()
+schema_indexer = SchemaIndexer()
 
 
 @router.post("", response_model=DataSourceResponse, status_code=status.HTTP_201_CREATED)
@@ -16,7 +19,7 @@ async def register_datasource(
     payload: DataSourceCreate,
     db: AsyncSession = Depends(get_metadata_db),
 ) -> DataSourceResponse:
-    """Register an external database and encrypt its connection credentials."""
+    """Register an external database, encrypt credentials, and trigger schema introspection."""
     # Check if name is already taken
     existing = await db.execute(select(DataSource).where(DataSource.name == payload.name))
     if existing.scalar_one_or_none():
@@ -37,6 +40,21 @@ async def register_datasource(
     db.add(datasource)
     await db.commit()
     await db.refresh(datasource)
+
+    # Automatic schema introspection & ChromaDB vector indexing
+    try:
+        indexed_count = await schema_indexer.index_datasource(
+            datasource_id=datasource.id,
+            connection_uri=payload.connection_uri,
+            dialect=payload.dialect,
+        )
+        datasource.tables_indexed = indexed_count
+        datasource.last_synced_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(datasource)
+    except Exception as exc:
+        # Retain registered datasource even if target DB is temporarily unreachable
+        pass
 
     return DataSourceResponse.model_validate(datasource)
 
@@ -81,10 +99,14 @@ async def get_datasource_schema(
             detail=f"Data source with ID '{datasource_id}' not found.",
         )
 
+    # Retrieve table cards
+    cards = schema_indexer.retrieve_relevant_tables(datasource_id, query="", top_k=20)
+
     return {
         "datasource_id": ds.id,
         "name": ds.name,
         "dialect": ds.dialect,
         "tables_indexed": ds.tables_indexed,
         "last_synced_at": ds.last_synced_at,
+        "table_cards": cards,
     }
