@@ -1,0 +1,80 @@
+version: "3.9"
+
+services:
+  # Internal metadata store for QueryForge
+  queryforge-postgres:
+    image: postgres:16-alpine
+    container_name: queryforge_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: queryforge
+      POSTGRES_PASSWORD: queryforge_password
+      POSTGRES_DB: queryforge_metadata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_metadata_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U queryforge -d queryforge_metadata"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Standalone ChromaDB vector store for Schema RAG
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: queryforge_chromadb
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+
+  # Target Demo E-Commerce PostgreSQL database (isolated from metadata)
+  target-ecommerce-db:
+    image: postgres:16-alpine
+    container_name: queryforge_target_ecommerce
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: demo_user
+      POSTGRES_PASSWORD: demo_password
+      POSTGRES_DB: ecommerce_demo
+    ports:
+      - "5433:5432"
+    volumes:
+      - target_ecommerce_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo_user -d ecommerce_demo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # QueryForge Core Microservice
+  queryforge-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: queryforge_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - METADATA_DATABASE_URL=postgresql+asyncpg://queryforge:queryforge_password@queryforge-postgres:5432/queryforge_metadata
+      - TARGET_DATABASE_URL=postgresql+asyncpg://demo_user:demo_password@target-ecommerce-db:5432/ecommerce_demo
+      - CHROMA_PERSIST_DIRECTORY=/app/chroma_db
+    depends_on:
+      queryforge-postgres:
+        condition: service_healthy
+      target-ecommerce-db:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+
+volumes:
+  postgres_metadata_data:
+  chroma_data:
+  target_ecommerce_data:
