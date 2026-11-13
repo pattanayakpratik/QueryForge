@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: queryforge_password
       POSTGRES_DB: queryforge_metadata
     ports:
-      - "5432:5432"
+      - "5435:5432"
     volumes:
       - postgres_metadata_data:/var/lib/postgresql/data
     healthcheck:
@@ -41,7 +41,7 @@ services:
       POSTGRES_PASSWORD: demo_password
       POSTGRES_DB: ecommerce_demo
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - target_ecommerce_data:/var/lib/postgresql/data
     healthcheck:
