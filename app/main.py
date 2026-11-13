@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import init_metadata_db, close_target_engines
-from app.api.v1 import api_v1_router
+from app.api import api_router
 
 settings = get_settings()
 
@@ -39,8 +39,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount API v1 router
-app.include_router(api_v1_router, prefix="/v1")
+# Mount API router
+app.include_router(api_router, prefix="/v1")
 
 
 @app.get("/", tags=["Health"])

@@ -79,7 +79,7 @@ QueryForge/
 │   ├── main.py                  # FastAPI initialization & lifespan
 │   ├── config.py                # Pydantic Settings (Groq, Gemini, DB URLs, Cost caps)
 │   ├── database.py              # Internal metadata DB session + Dynamic Target DB pool
-│   ├── api/v1/
+│   ├── api/
 │   │   ├── datasources.py       # DB registration & schema sync routes
 │   │   ├── query.py             # /ask and /stream (SSE) Text-to-SQL endpoints
 │   │   ├── golden.py            # Few-shot training pair CRUD
