@@ -6,6 +6,8 @@
   <img src="https://img.shields.io/badge/SQLGlot-AST%20Firewall-orange" alt="SQLGlot"/>
   <img src="https://img.shields.io/badge/Groq-LLaMA--3.3--70B-f55036" alt="Groq"/>
   <img src="https://img.shields.io/badge/Gemini-1.5%20Flash-4285F4?logo=google" alt="Gemini"/>
+  <img src="https://img.shields.io/badge/Next.js-15%2F16%20App%20Router-black?logo=next.js" alt="Next.js"/>
+  <img src="https://img.shields.io/badge/Tailwind-CSS-38B2AC?logo=tailwindcss" alt="Tailwind CSS"/>
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License"/>
 </p>
 
@@ -128,10 +130,19 @@ python scripts/seed_demo_ecommerce_db.py
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-### 4. Start QueryForge Microservice
+### 4. Start QueryForge Microservice (Backend)
 
 ```bash
 uvicorn app.main:app --reload --port 8000
+```
+
+### 5. Launch AI Analytics Studio (Frontend)
+
+```bash
+cd dashboard
+npm install
+npm run dev
+# Open http://localhost:3000 to launch the Studio with 3 recruiter live demo scenarios
 ```
 
 ---
