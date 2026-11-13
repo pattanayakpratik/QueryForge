@@ -18,7 +18,7 @@ export function Header() {
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-bold tracking-tight text-white">QueryForge</h1>
               <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                v1.0 Microservice
+                AI Microservice
               </span>
             </div>
             <p className="text-xs text-slate-400 hidden sm:block">

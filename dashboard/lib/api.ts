@@ -85,8 +85,9 @@ export async function streamQueryExecution(
   const isSecurityDemo = question.toLowerCase().includes("drop table") || question.toLowerCase().includes("orders;");
 
   try {
-    // Try real backend first
-    const response = await fetch("/api/v1/query/stream", {
+    // Connect directly to FastAPI backend service
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const response = await fetch(`${apiBase}/query/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ datasource_id: datasourceId, question }),
@@ -136,7 +137,7 @@ export async function streamQueryExecution(
       return;
     }
   } catch (err) {
-    console.warn("Backend /api/v1 unreachable; running realistic studio simulation.", err);
+    console.warn("Backend /query/stream unreachable; running realistic studio simulation.", err);
   }
 
   // Realistic Interactive Studio Simulation (Ensures seamless recruiter live demos)

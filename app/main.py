@@ -40,7 +40,7 @@ app.add_middleware(
 )
 
 # Mount API router
-app.include_router(api_router, prefix="/v1")
+app.include_router(api_router)
 
 
 @app.get("/", tags=["Health"])
