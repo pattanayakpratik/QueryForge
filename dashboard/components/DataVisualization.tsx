@@ -92,18 +92,25 @@ export function DataVisualization({ result, isLoading }: DataVisualizationProps)
     );
   }
 
-  // Handle CSV Export
+  // Handle CSV Export with formula injection mitigation (CWE-1236)
   const handleExportCSV = () => {
     if (!result.rows || result.rows.length === 0) return;
-    const headers = result.columns.join(",");
+    const headers = result.columns
+      .map((col) => `"${String(col).replace(/"/g, '""')}"`)
+      .join(",");
+
     const rows = result.rows
       .map((row) =>
         result.columns
           .map((col) => {
-            const val = row[col];
-            if (val === null || val === undefined) return "";
-            if (typeof val === "string" && val.includes(",")) return `"${val}"`;
-            return String(val);
+            const rawVal = row[col];
+            if (rawVal === null || rawVal === undefined) return '""';
+            let strVal = String(rawVal);
+            // Neutralize spreadsheet formula injection (=, +, -, @, \t, \r)
+            if (/^[=+\-@\t\r]/.test(strVal)) {
+              strVal = `'${strVal}`;
+            }
+            return `"${strVal.replace(/"/g, '""')}"`;
           })
           .join(",")
       )
