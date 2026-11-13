@@ -112,6 +112,39 @@ class TestAPIEndpoints(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["total_queries"], 0)
         self.assertEqual(data["success_rate"], 0.0)
 
+    async def test_query_stream_auto_provisions_default_demo_db(self):
+        """POST /query/stream with 'default-demo-db' should auto-provision fallback and stream SSE."""
+        payload = {
+            "datasource_id": "default-demo-db",
+            "question": "SELECT 1;",
+        }
+        res = await self.client.post("/query/stream", json=payload)
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("text/event-stream", res.headers.get("content-type", ""))
+        self.assertIn("data: ", res.text)
+
+    async def test_query_ask_auto_provisions_default_demo_db(self):
+        """POST /query/ask with 'default-demo-db' should auto-provision fallback and execute query."""
+        payload = {
+            "datasource_id": "default-demo-db",
+            "question": "SELECT 1;",
+        }
+        res = await self.client.post("/query/ask", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "SUCCESS")
+        self.assertIn("sql", data)
+
+    async def test_query_ask_unknown_datasource_returns_404(self):
+        """POST /query/ask with an unregistered uuid should return 404."""
+        payload = {
+            "datasource_id": "non-existent-uuid-12345",
+            "question": "SELECT 1;",
+        }
+        res = await self.client.post("/query/ask", json=payload)
+        self.assertEqual(res.status_code, 404)
+        self.assertIn("does not exist", res.json()["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -112,19 +112,25 @@ export async function streamQueryExecution(
               const event: AgentStepEvent = JSON.parse(line.replace("data: ", ""));
               onEvent(event);
 
-              if (event.event_type === "step_completed") {
+              if (
+                event.event_type === "step_completed" ||
+                event.event_type === "error_ast" ||
+                event.event_type === "error_exhausted" ||
+                event.event_type === "error_cost"
+              ) {
                 onComplete({
-                  sql: event.data.sql,
-                  columns: event.data.columns,
-                  rows: event.data.rows,
-                  row_count: event.data.row_count,
-                  execution_time_ms: event.data.execution_time_ms,
+                  sql: event.data.sql || "",
+                  columns: event.data.columns || [],
+                  rows: event.data.rows || [],
+                  row_count: event.data.row_count || 0,
+                  execution_time_ms: event.data.execution_time_ms || 0,
                   explain_cost: event.data.explain_cost,
-                  provider_used: event.data.provider_used,
-                  self_heal_attempts: event.data.self_heal_attempts,
-                  status: event.data.status,
+                  provider_used: event.data.provider_used || "UNKNOWN",
+                  self_heal_attempts: event.data.self_heal_attempts || 0,
+                  status: (event.data.status || (event.event_type === "error_ast" ? "BLOCKED_AST" : "FAILED_EXECUTION")) as any,
                   chart_config: event.data.chart_config,
-                  summary: event.data.summary,
+                  summary: event.message || event.data.summary,
+                  error_history: event.data.error_history,
                 });
                 return;
               }

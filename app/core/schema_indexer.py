@@ -394,3 +394,7 @@ class SchemaIndexer:
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [p for _, p in scored[:top_k]]
+
+    def get_indexed_table_names(self, datasource_id: str) -> List[str]:
+        """Return list of indexed table names for a datasource."""
+        return list(self._in_memory_cards.get(datasource_id, {}).keys())
