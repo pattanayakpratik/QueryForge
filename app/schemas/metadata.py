@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 class DataSourceCreate(BaseModel):
@@ -10,6 +10,17 @@ class DataSourceCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=128, description="Unique data source identifier")
     dialect: str = Field(default="postgresql", description="SQL dialect: 'postgresql', 'sqlite', etc.")
     connection_uri: str = Field(..., description="Target database connection string")
+
+    @field_validator("connection_uri")
+    @classmethod
+    def validate_connection_scheme(cls, v: str) -> str:
+        clean = v.strip()
+        allowed = ("postgresql+asyncpg://", "postgresql://", "sqlite+aiosqlite://", "sqlite://")
+        if not any(clean.lower().startswith(s) for s in allowed):
+            raise ValueError(
+                f"Invalid connection URI scheme. Must start with one of: {', '.join(allowed)}"
+            )
+        return clean
 
 
 class DataSourceResponse(BaseModel):
