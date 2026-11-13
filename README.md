@@ -145,6 +145,13 @@ npm run dev
 # Open http://localhost:3000 to launch the Studio with 3 recruiter live demo scenarios
 ```
 
+### 6. Or Run Full Stack with Docker Compose
+
+```bash
+docker compose up --build
+# Starts PostgreSQL (metadata + demo target), ChromaDB, FastAPI Backend (:8000), and Next.js Studio (:3000)
+```
+
 ---
 
 ## 🛡️ Security & Privacy Design

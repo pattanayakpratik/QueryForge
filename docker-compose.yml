@@ -74,6 +74,21 @@ services:
       chromadb:
         condition: service_started
 
+  # QueryForge AI Analytics Studio UI (Next.js 16)
+  queryforge-dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: queryforge_dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - BACKEND_URL=http://queryforge-api:8000
+    depends_on:
+      - queryforge-api
+
 volumes:
   postgres_metadata_data:
   chroma_data:
