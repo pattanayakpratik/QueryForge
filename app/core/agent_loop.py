@@ -280,6 +280,14 @@ class AgentLoop:
             columns: List[str] = []
 
             async with target_engine.connect() as conn:
+                if not is_sqlite:
+                    await conn.execute(text("SET LOCAL TRANSACTION READ ONLY;"))
+                    await conn.execute(
+                        text(f"SET LOCAL statement_timeout = '{self._settings.statement_timeout_ms}';")
+                    )
+                else:
+                    await conn.execute(text("PRAGMA query_only = ON;"))
+
                 cursor = await conn.execute(text(sanitized_sql))
                 if cursor.returns_rows:
                     columns = list(cursor.keys())
