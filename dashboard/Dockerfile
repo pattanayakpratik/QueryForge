@@ -23,6 +23,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
+    BACKEND_URL=http://queryforge-api:8000 \
     PORT=3000 \
     HOSTNAME="0.0.0.0"
 
