@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # Internal metadata store for QueryForge
   queryforge-postgres:
