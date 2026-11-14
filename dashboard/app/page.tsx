@@ -39,6 +39,13 @@ export default function Home() {
   const [isConfirmingMutation, setIsConfirmingMutation] = useState(false);
   const [activeQuestion, setActiveQuestion] = useState("");
 
+  const customDataSources = datasources.filter((d) => d.id !== "default-demo-db");
+  const hasCustomDataSources = customDataSources.length > 0;
+  // If original/custom database(s) are connected, hide the demo database from dropdown selector
+  const displayedDataSources = hasCustomDataSources ? customDataSources : datasources;
+  // Show 1-click recruiter demo buttons only when demo database is active and no custom DB is connected
+  const showDemoPrompts = !hasCustomDataSources && activeDatasource.id === "default-demo-db";
+
   useEffect(() => {
     loadDataSources();
   }, []);
@@ -48,8 +55,14 @@ export default function Home() {
       const list = await fetchDataSources();
       if (list && list.length > 0) {
         setDatasources(list);
-        const match = list.find((ds) => ds.id === activeDatasource.id) || list[0];
-        setActiveDatasource(match);
+        const custom = list.filter((ds) => ds.id !== "default-demo-db");
+        if (custom.length > 0) {
+          const match = custom.find((ds) => ds.id === activeDatasource.id) || custom[0];
+          setActiveDatasource(match);
+        } else {
+          const match = list.find((ds) => ds.id === activeDatasource.id) || list[0];
+          setActiveDatasource(match);
+        }
       }
     } catch (err) {
       console.warn("Failed to load datasources", err);
@@ -66,11 +79,20 @@ export default function Home() {
   const handleDeleteDataSource = async (dsId: string) => {
     try {
       await deleteDataSource(dsId);
-      setDatasources((prev) => prev.filter((d) => d.id !== dsId));
-      if (activeDatasource.id === dsId) {
-        const fallback = datasources.find((d) => d.id !== dsId) || DEFAULT_DATASOURCE;
-        setActiveDatasource(fallback);
+      const updated = datasources.filter((d) => d.id !== dsId);
+      const hasDemo = updated.some((d) => d.id === "default-demo-db");
+      const finalDatasources = hasDemo ? updated : [...updated, DEFAULT_DATASOURCE];
+      setDatasources(finalDatasources);
+      const remainingCustom = finalDatasources.filter((d) => d.id !== "default-demo-db");
+      if (remainingCustom.length === 0) {
+        // All custom databases deleted! Restore demo database as active
+        const demoDb = finalDatasources.find((d) => d.id === "default-demo-db") || DEFAULT_DATASOURCE;
+        setActiveDatasource(demoDb);
+      } else if (activeDatasource.id === dsId) {
+        setActiveDatasource(remainingCustom[0]);
       }
+      setResult(null);
+      setEvents([]);
     } catch (err: any) {
       alert(err.message || "Failed to delete data source.");
     }
@@ -169,7 +191,7 @@ export default function Home() {
       {/* Navigation Header with Active Database Switcher & Mode Toggle */}
       <Header
         activeDatasource={activeDatasource}
-        datasources={datasources}
+        datasources={displayedDataSources}
         onSelectDatasource={setActiveDatasource}
         onOpenConnectModal={() => setIsConnectModalOpen(true)}
         onOpenSchemaModal={() => setIsSchemaModalOpen(true)}
@@ -182,7 +204,11 @@ export default function Home() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex flex-col gap-6">
         {/* Panel 1: Natural Language Command Bar & 1-Click Recruiter Demos */}
         <section>
-          <CommandBar onSearch={handleRunQuery} isLoading={isLoading} />
+          <CommandBar
+            onSearch={handleRunQuery}
+            isLoading={isLoading}
+            showDemoPrompts={showDemoPrompts}
+          />
         </section>
 
         {/* Studio Workspace Grid: Panel 2 (Timeline) & Panel 3 (Visualizations) */}
@@ -227,7 +253,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-slate-900/80 py-4 text-center text-xs text-slate-600">
         <p>
-          QueryForge Standalone AI Microservice · Built with Next.js 16, SQLGlot, ChromaDB & Groq LLaMA-3.3-70B
+          QueryForge Standalone AI Microservice · Built with Next.js 16, SQLGlot, ChromaDB & Groq 120B / Gemini 2.5
         </p>
       </footer>
     </div>

@@ -7,9 +7,10 @@ import { RECRUITER_DEMO_PROMPTS, RecruiterDemoPrompt } from "@/lib/api";
 interface CommandBarProps {
   onSearch: (question: string, suggestedMode?: "read_only" | "read_write") => void;
   isLoading: boolean;
+  showDemoPrompts?: boolean;
 }
 
-export function CommandBar({ onSearch, isLoading }: CommandBarProps) {
+export function CommandBar({ onSearch, isLoading, showDemoPrompts = true }: CommandBarProps) {
   const [query, setQuery] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -62,46 +63,48 @@ export function CommandBar({ onSearch, isLoading }: CommandBarProps) {
       </form>
 
       {/* Recruiter 1-Click Demo Buttons */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 pt-1">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-          <Sparkles className="h-3 w-3 text-amber-400" />
-          Recruiter 1-Click Demos:
-        </span>
-        <div className="flex flex-wrap items-center gap-2">
-          {RECRUITER_DEMO_PROMPTS.map((demo) => {
-            let Icon = Sparkles;
-            let badgeStyle = "bg-indigo-500/10 border-indigo-500/30 hover:border-indigo-500/60 text-indigo-300";
+      {showDemoPrompts && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 pt-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+            <Sparkles className="h-3 w-3 text-amber-400" />
+            Recruiter 1-Click Demos:
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {RECRUITER_DEMO_PROMPTS.map((demo) => {
+              let Icon = Sparkles;
+              let badgeStyle = "bg-indigo-500/10 border-indigo-500/30 hover:border-indigo-500/60 text-indigo-300";
 
-            if (demo.id === "demo-self-healing") {
-              Icon = RotateCw;
-              badgeStyle = "bg-amber-500/10 border-amber-500/30 hover:border-amber-500/60 text-amber-300";
-            } else if (demo.id === "demo-security-guardrail") {
-              Icon = AlertOctagon;
-              badgeStyle = "bg-rose-500/10 border-rose-500/30 hover:border-rose-500/60 text-rose-300";
-            } else if (demo.id === "demo-write-guardrail") {
-              Icon = ShieldAlert;
-              badgeStyle = "bg-purple-500/10 border-purple-500/30 hover:border-purple-500/60 text-purple-300";
-            }
+              if (demo.id === "demo-self-healing") {
+                Icon = RotateCw;
+                badgeStyle = "bg-amber-500/10 border-amber-500/30 hover:border-amber-500/60 text-amber-300";
+              } else if (demo.id === "demo-security-guardrail") {
+                Icon = AlertOctagon;
+                badgeStyle = "bg-rose-500/10 border-rose-500/30 hover:border-rose-500/60 text-rose-300";
+              } else if (demo.id === "demo-write-guardrail") {
+                Icon = ShieldAlert;
+                badgeStyle = "bg-purple-500/10 border-purple-500/30 hover:border-purple-500/60 text-purple-300";
+              }
 
-            return (
-              <button
-                key={demo.id}
-                type="button"
-                onClick={() => handleSelectDemo(demo)}
-                disabled={isLoading}
-                title={demo.description}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${badgeStyle}`}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                <span>{demo.label}</span>
-                <span className="text-[10px] opacity-70 ml-1 px-1.5 py-0.2 rounded bg-black/30">
-                  {demo.tag}
-                </span>
-              </button>
-            );
-          })}
+              return (
+                <button
+                  key={demo.id}
+                  type="button"
+                  onClick={() => handleSelectDemo(demo)}
+                  disabled={isLoading}
+                  title={demo.description}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${badgeStyle}`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{demo.label}</span>
+                  <span className="text-[10px] opacity-70 ml-1 px-1.5 py-0.2 rounded bg-black/30">
+                    {demo.tag}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
