@@ -57,6 +57,18 @@ export function AgentTimeline({ events, isLoading, status }: AgentTimelineProps)
               AST BLOCKED
             </span>
           )}
+          {status === "AWAITING_CONFIRMATION" && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-semibold animate-pulse">
+              <AlertTriangle className="h-3 w-3" />
+              AWAITING CONFIRMATION
+            </span>
+          )}
+          {status === "MUTATION_COMMITTED" && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[10px] font-semibold">
+              <CheckCircle2 className="h-3 w-3" />
+              MUTATION COMMITTED
+            </span>
+          )}
           {status === "SUCCESS" && (
             <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-semibold">
               <CheckCircle2 className="h-3 w-3" />
@@ -74,11 +86,19 @@ export function AgentTimeline({ events, isLoading, status }: AgentTimelineProps)
           const isAst = evt.event_type.includes("ast");
           const isCost = evt.event_type.includes("cost");
           const isCompleted = evt.event_type === "step_completed";
+          const isConfirmation = evt.event_type.includes("confirmation") || evt.event_type.includes("impact");
+          const isCommitted = evt.event_type.includes("committed");
 
           let Icon = Activity;
           let iconColor = "text-indigo-400 bg-indigo-500/10 border-indigo-500/30";
 
-          if (isError || evt.event_type === "error_ast") {
+          if (isConfirmation) {
+            Icon = AlertTriangle;
+            iconColor = "text-amber-400 bg-amber-500/10 border-amber-500/30";
+          } else if (isCommitted) {
+            Icon = CheckCircle2;
+            iconColor = "text-purple-400 bg-purple-500/10 border-purple-500/30";
+          } else if (isError || evt.event_type === "error_ast") {
             Icon = ShieldAlert;
             iconColor = "text-rose-400 bg-rose-500/10 border-rose-500/30";
           } else if (isHeal) {

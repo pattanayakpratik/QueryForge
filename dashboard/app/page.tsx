@@ -9,6 +9,7 @@ import { ConnectDatabaseModal } from "@/components/ConnectDatabaseModal";
 import { SchemaViewerModal } from "@/components/SchemaViewerModal";
 import {
   streamQueryExecution,
+  confirmMutationExecution,
   fetchDataSources,
   deleteDataSource,
   AgentStepEvent,
@@ -27,6 +28,7 @@ const DEFAULT_DATASOURCE: DataSourceInfo = {
 export default function Home() {
   const [datasources, setDatasources] = useState<DataSourceInfo[]>([DEFAULT_DATASOURCE]);
   const [activeDatasource, setActiveDatasource] = useState<DataSourceInfo>(DEFAULT_DATASOURCE);
+  const [studioMode, setStudioMode] = useState<"read_only" | "read_write">("read_only");
 
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [isSchemaModalOpen, setIsSchemaModalOpen] = useState(false);
@@ -34,6 +36,7 @@ export default function Home() {
   const [events, setEvents] = useState<AgentStepEvent[]>([]);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isConfirmingMutation, setIsConfirmingMutation] = useState(false);
   const [activeQuestion, setActiveQuestion] = useState("");
 
   useEffect(() => {
@@ -73,7 +76,14 @@ export default function Home() {
     }
   };
 
-  const handleRunQuery = async (question: string) => {
+  const handleRunQuery = async (
+    question: string,
+    suggestedMode?: "read_only" | "read_write"
+  ) => {
+    const modeToUse = suggestedMode || studioMode;
+    if (suggestedMode && suggestedMode !== studioMode) {
+      setStudioMode(suggestedMode);
+    }
     setActiveQuestion(question);
     setIsLoading(true);
     setEvents([]);
@@ -91,13 +101,72 @@ export default function Home() {
       },
       (errorMsg) => {
         setIsLoading(false);
-      }
+      },
+      modeToUse
     );
+  };
+
+  const handleConfirmMutation = async (sql: string) => {
+    setIsConfirmingMutation(true);
+    try {
+      const confirmRes = await confirmMutationExecution({
+        datasourceId: activeDatasource.id,
+        sql,
+      });
+
+      const committedResult: QueryResult = {
+        sql: confirmRes.sql,
+        columns: [],
+        rows: [],
+        row_count: confirmRes.rows_affected,
+        rows_affected: confirmRes.rows_affected,
+        execution_time_ms: confirmRes.execution_time_ms,
+        provider_used: "USER_CONFIRMED",
+        self_heal_attempts: 0,
+        status: "MUTATION_COMMITTED",
+        summary: confirmRes.message,
+      };
+
+      setResult(committedResult);
+
+      setEvents((prev) => [
+        ...prev,
+        {
+          event_type: "step_mutation_committed",
+          step_number: prev.length + 1,
+          message: `Mutation Committed: ${confirmRes.rows_affected} row(s) affected (${confirmRes.execution_time_ms}ms).`,
+          data: {
+            status: "MUTATION_COMMITTED",
+            rows_affected: confirmRes.rows_affected,
+            execution_time_ms: confirmRes.execution_time_ms,
+          },
+          timestamp: Number((performance.now() / 1000).toFixed(2)),
+        },
+      ]);
+    } catch (err: any) {
+      alert(err.message || "Failed to commit mutation.");
+    } finally {
+      setIsConfirmingMutation(false);
+    }
+  };
+
+  const handleCancelMutation = () => {
+    setResult(null);
+    setEvents((prev) => [
+      ...prev,
+      {
+        event_type: "step_mutation_cancelled",
+        step_number: prev.length + 1,
+        message: "Write mutation discarded by user. No database changes were applied.",
+        data: { status: "CANCELLED" },
+        timestamp: Number((performance.now() / 1000).toFixed(2)),
+      },
+    ]);
   };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100">
-      {/* Navigation Header with Active Database Switcher */}
+      {/* Navigation Header with Active Database Switcher & Mode Toggle */}
       <Header
         activeDatasource={activeDatasource}
         datasources={datasources}
@@ -105,6 +174,8 @@ export default function Home() {
         onOpenConnectModal={() => setIsConnectModalOpen(true)}
         onOpenSchemaModal={() => setIsSchemaModalOpen(true)}
         onDeleteDatasource={handleDeleteDataSource}
+        studioMode={studioMode}
+        onToggleStudioMode={setStudioMode}
       />
 
       {/* Main Studio Container */}
@@ -127,7 +198,13 @@ export default function Home() {
 
           {/* Panel 3: Dynamic Chart, Data Grid, and SQL Syntax */}
           <div className="lg:col-span-7 h-full">
-            <DataVisualization result={result} isLoading={isLoading} />
+            <DataVisualization
+              result={result}
+              isLoading={isLoading}
+              onConfirmMutation={handleConfirmMutation}
+              onCancelMutation={handleCancelMutation}
+              isConfirmingMutation={isConfirmingMutation}
+            />
           </div>
         </section>
       </main>

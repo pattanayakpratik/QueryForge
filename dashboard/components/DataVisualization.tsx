@@ -26,6 +26,12 @@ import {
   ShieldAlert,
   Clock,
   Layers,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Database,
+  AlertOctagon,
 } from "lucide-react";
 import { QueryResult } from "@/lib/api";
 
@@ -34,11 +40,28 @@ const PIE_COLORS = ["#6366f1", "#06b6d4", "#10b981", "#f59e0b", "#ec4899", "#8b5
 interface DataVisualizationProps {
   result: QueryResult | null;
   isLoading: boolean;
+  onConfirmMutation?: (sql: string) => Promise<void>;
+  onCancelMutation?: () => void;
+  isConfirmingMutation?: boolean;
 }
 
-export function DataVisualization({ result, isLoading }: DataVisualizationProps) {
+export function DataVisualization({
+  result,
+  isLoading,
+  onConfirmMutation,
+  onCancelMutation,
+  isConfirmingMutation = false,
+}: DataVisualizationProps) {
   const [activeTab, setActiveTab] = useState<"chart" | "table" | "sql">("chart");
   const [copied, setCopied] = useState(false);
+
+  const handleCopySQL = () => {
+    if (result?.sql) {
+      navigator.clipboard.writeText(result.sql);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -92,6 +115,200 @@ export function DataVisualization({ result, isLoading }: DataVisualizationProps)
     );
   }
 
+  // Handle Awaiting Human Confirmation State for Write/Mutation
+  if (result.status === "AWAITING_CONFIRMATION") {
+    const impact = result.mutation_impact;
+    const isCritical = impact?.risk_level === "CRITICAL";
+    const isHigh = impact?.risk_level === "HIGH";
+    const isMedium = impact?.risk_level === "MEDIUM";
+
+    let riskBadgeColor = "bg-emerald-500/10 border-emerald-500/30 text-emerald-400";
+    if (isCritical) {
+      riskBadgeColor = "bg-rose-500/20 border-rose-500/40 text-rose-300 animate-pulse";
+    } else if (isHigh) {
+      riskBadgeColor = "bg-orange-500/20 border-orange-500/40 text-orange-300";
+    } else if (isMedium) {
+      riskBadgeColor = "bg-amber-500/20 border-amber-500/40 text-amber-300";
+    }
+
+    return (
+      <div className="rounded-xl border border-amber-800/60 bg-gradient-to-b from-amber-950/20 to-slate-900/80 p-6 flex flex-col justify-between h-full min-h-[460px] shadow-2xl">
+        <div className="space-y-4">
+          {/* Header Alert */}
+          <div className="flex items-start justify-between gap-4 border-b border-amber-900/40 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-amber-200">
+                  Write Action Detected: Confirmation Required
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  QueryForge is in Read-Write mode. Review the assessed impact below before authorizing execution.
+                </p>
+              </div>
+            </div>
+            <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border uppercase tracking-wider shrink-0 ${riskBadgeColor}`}>
+              {impact?.risk_level || "MEDIUM"} Risk
+            </span>
+          </div>
+
+          {/* Impact Assessment Details */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* What Will Be Done */}
+            <div className="p-3.5 rounded-lg bg-slate-950/70 border border-slate-800/80 space-y-1.5">
+              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Database className="h-3.5 w-3.5 text-indigo-400" />
+                <span>What Will Be Done</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono text-xs font-bold">
+                  {impact?.action_type || "MUTATION"}
+                </span>
+                <span className="text-xs text-slate-300">
+                  {impact?.description || "Executes database write modification."}
+                </span>
+              </div>
+            </div>
+
+            {/* Target Tables & Affected Columns */}
+            <div className="p-3.5 rounded-lg bg-slate-950/70 border border-slate-800/80 space-y-1.5">
+              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Layers className="h-3.5 w-3.5 text-indigo-400" />
+                <span>Targeted Resources</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="text-slate-400">Tables:</span>
+                {impact?.target_tables.map((t) => (
+                  <span key={t} className="px-2 py-0.5 rounded bg-slate-800 text-slate-200 font-mono text-[11px] border border-slate-700">
+                    {t}
+                  </span>
+                ))}
+                {impact?.affected_columns && impact.affected_columns.length > 0 && (
+                  <>
+                    <span className="text-slate-400 ml-2">Cols:</span>
+                    {impact.affected_columns.map((c) => (
+                      <span key={c} className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono text-[11px] border border-slate-700">
+                        {c}
+                      </span>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Scope / WHERE Filter */}
+            <div className="p-3.5 rounded-lg bg-slate-950/70 border border-slate-800/80 space-y-1.5">
+              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                Filter Scope
+              </div>
+              {impact?.has_where_clause ? (
+                <div className="p-2 rounded bg-slate-900 border border-slate-800 font-mono text-xs text-emerald-300 truncate">
+                  WHERE {impact.where_clause_preview}
+                </div>
+              ) : (
+                <div className="p-2 rounded bg-rose-950/40 border border-rose-800/40 font-mono text-xs text-rose-300 flex items-center gap-1.5 font-bold">
+                  <AlertOctagon className="h-3.5 w-3.5 shrink-0" />
+                  <span>UNFILTERED: Applies to ALL rows in table!</span>
+                </div>
+              )}
+            </div>
+
+            {/* Dry-Run Blast Radius */}
+            <div className="p-3.5 rounded-lg bg-slate-950/70 border border-slate-800/80 space-y-1.5">
+              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                <span>Estimated Blast Radius</span>
+                <span className="text-[10px] text-slate-500 font-normal">Dry-Run Rollback</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {impact?.estimated_affected_rows !== undefined && impact?.estimated_affected_rows !== null ? (
+                  <span className="text-sm font-bold text-amber-300 font-mono">
+                    ~{impact.estimated_affected_rows} row(s) affected
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-300 font-mono">
+                    Schema structure modification (DDL)
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* SQL Preview Box */}
+          <div className="relative rounded-lg bg-black/70 border border-slate-800 p-3.5 font-mono text-xs text-indigo-200 overflow-x-auto">
+            <button
+              onClick={handleCopySQL}
+              className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-sans border border-slate-700 transition-colors"
+            >
+              {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+              <span>{copied ? "Copied" : "Copy SQL"}</span>
+            </button>
+            <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1 font-sans">
+              Proposed Mutation SQL
+            </span>
+            <pre className="whitespace-pre-wrap">{result.sql}</pre>
+          </div>
+        </div>
+
+        {/* Human Confirmation Actions */}
+        <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800/80 mt-4">
+          <button
+            type="button"
+            onClick={onCancelMutation}
+            disabled={isConfirmingMutation}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            <XCircle className="h-4 w-4" />
+            <span>Cancel / Reject</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onConfirmMutation && onConfirmMutation(result.sql)}
+            disabled={isConfirmingMutation}
+            className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-bold shadow-lg shadow-orange-950/40 transition-all disabled:opacity-50 cursor-pointer"
+          >
+            {isConfirmingMutation ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Committing Changes...</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="h-4 w-4" />
+                <span>Proceed & Execute Mutation</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Handle Mutation Committed State
+  if (result.status === "MUTATION_COMMITTED") {
+    return (
+      <div className="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-8 flex flex-col items-center justify-center text-center min-h-[420px]">
+        <div className="h-16 w-16 rounded-full bg-emerald-900/40 border border-emerald-600/40 flex items-center justify-center text-emerald-400 mb-4">
+          <CheckCircle2 className="h-8 w-8" />
+        </div>
+        <h3 className="text-lg font-bold text-emerald-300">Mutation Executed & Committed</h3>
+        <p className="text-xs font-mono uppercase tracking-wider text-emerald-400 mt-1 px-2.5 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-800/50">
+          Transaction Committed • {result.rows_affected ?? 0} Rows Affected • {result.execution_time_ms}ms
+        </p>
+        <p className="text-sm text-slate-300 mt-4 max-w-md leading-relaxed">
+          {result.summary || "The confirmed mutation has been successfully applied to the database and logged in the audit registry."}
+        </p>
+        {result.sql && (
+          <div className="mt-6 w-full max-w-lg p-3 rounded-lg bg-black/60 border border-emerald-900/50 text-left font-mono text-xs text-emerald-200 overflow-x-auto">
+            {result.sql}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Handle CSV Export with formula injection mitigation (CWE-1236)
   const handleExportCSV = () => {
     if (!result.rows || result.rows.length === 0) return;
@@ -124,12 +341,6 @@ export function DataVisualization({ result, isLoading }: DataVisualizationProps)
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const handleCopySQL = () => {
-    navigator.clipboard.writeText(result.sql);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const chart = result.chart_config;
