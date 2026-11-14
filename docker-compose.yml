@@ -69,6 +69,8 @@ services:
       - CHROMA_PERSIST_DIRECTORY=/app/chroma_db
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-openai/gpt-oss-120b}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY:-}
     depends_on:
       queryforge-postgres:

@@ -138,6 +138,53 @@ class LLMRouter:
             if should_close:
                 await client.aclose()
 
+    def _mock_fallback(
+        self,
+        prompt: str,
+        start_time: float,
+        fallback: bool = False,
+        failure_reason: Optional[str] = None,
+    ) -> LLMResult:
+        """Local semantic mock generator used when keys are absent or providers are offline."""
+        latency_ms = (time.perf_counter() - start_time) * 1000.0
+        lower_prompt = prompt.lower()
+        if "drop table" in lower_prompt:
+            mock_sql = "DROP TABLE orders;"
+        elif "user_total_rev" in lower_prompt:
+            if "error" in lower_prompt or "undefinedcolumn" in lower_prompt or "repair" in lower_prompt:
+                mock_sql = (
+                    "SELECT c.id, c.name, SUM(o.total_amount_cents)/100.0 AS total_revenue "
+                    "FROM customers c JOIN orders o ON c.id = o.customer_id "
+                    "GROUP BY c.id, c.name ORDER BY total_revenue DESC LIMIT 5;"
+                )
+            else:
+                mock_sql = "SELECT id, user_total_rev FROM customers LIMIT 5;"
+        elif any(k in lower_prompt for k in ["people", "person", "customer", "user", "who", "client"]):
+            mock_sql = (
+                "SELECT c.name AS customer_name, SUM(o.total_amount_cents)/100.0 AS total_revenue "
+                "FROM customers c JOIN orders o ON c.id = o.customer_id "
+                "GROUP BY c.id, c.name ORDER BY total_revenue DESC LIMIT 5;"
+            )
+        elif "refund" in lower_prompt or "revenue" in lower_prompt or "monthly" in lower_prompt:
+            mock_sql = (
+                "SELECT c.country, COUNT(DISTINCT o.id) AS total_orders, "
+                "SUM(o.total_amount_cents)/100.0 AS total_revenue "
+                "FROM customers c JOIN orders o ON c.id = o.customer_id "
+                "GROUP BY c.country ORDER BY total_revenue DESC LIMIT 5;"
+            )
+        else:
+            mock_sql = "SELECT 1;"
+
+        return LLMResult(
+            content=mock_sql,
+            cleaned_sql=mock_sql,
+            provider="MOCK_FALLBACK",
+            model="local-test-fallback",
+            latency_ms=round(latency_ms, 2),
+            fallback_triggered=fallback,
+            error_reason=failure_reason or "No active LLM API keys provided",
+        )
+
     async def _call_gemini(
         self,
         prompt: str,
@@ -145,49 +192,11 @@ class LLMRouter:
         fallback: bool = False,
         failure_reason: Optional[str] = None,
     ) -> LLMResult:
-        """Call Google Gemini 1.5/2.0 Flash API."""
+        """Call Google Gemini Flash API."""
         start_time = time.perf_counter()
 
         if not self._settings.gemini_api_key:
-            # When running in mock or unit testing environment without external keys
-            latency_ms = (time.perf_counter() - start_time) * 1000.0
-            lower_prompt = prompt.lower()
-            if "drop table" in lower_prompt:
-                mock_sql = "DROP TABLE orders;"
-            elif "user_total_rev" in lower_prompt:
-                if "error" in lower_prompt or "undefinedcolumn" in lower_prompt or "repair" in lower_prompt:
-                    mock_sql = (
-                        "SELECT c.id, c.name, SUM(o.total_amount_cents)/100.0 AS total_revenue "
-                        "FROM customers c JOIN orders o ON c.id = o.customer_id "
-                        "GROUP BY c.id, c.name ORDER BY total_revenue DESC LIMIT 5;"
-                    )
-                else:
-                    mock_sql = "SELECT id, user_total_rev FROM customers LIMIT 5;"
-            elif any(k in lower_prompt for k in ["people", "person", "customer", "user", "who", "client"]):
-                mock_sql = (
-                    "SELECT c.name AS customer_name, SUM(o.total_amount_cents)/100.0 AS total_revenue "
-                    "FROM customers c JOIN orders o ON c.id = o.customer_id "
-                    "GROUP BY c.id, c.name ORDER BY total_revenue DESC LIMIT 5;"
-                )
-            elif "refund" in lower_prompt or "revenue" in lower_prompt or "monthly" in lower_prompt:
-                mock_sql = (
-                    "SELECT c.country, COUNT(DISTINCT o.id) AS total_orders, "
-                    "SUM(o.total_amount_cents)/100.0 AS total_revenue "
-                    "FROM customers c JOIN orders o ON c.id = o.customer_id "
-                    "GROUP BY c.country ORDER BY total_revenue DESC LIMIT 5;"
-                )
-            else:
-                mock_sql = "SELECT 1;"
-
-            return LLMResult(
-                content=mock_sql,
-                cleaned_sql=mock_sql,
-                provider="MOCK_FALLBACK",
-                model="local-test-fallback",
-                latency_ms=round(latency_ms, 2),
-                fallback_triggered=fallback,
-                error_reason=failure_reason or "No active LLM API keys provided",
-            )
+            return self._mock_fallback(prompt, start_time, fallback=fallback, failure_reason=failure_reason)
 
         model = self._settings.gemini_model
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self._settings.gemini_api_key}"
@@ -232,6 +241,10 @@ class LLMRouter:
                 fallback_triggered=fallback,
                 error_reason=failure_reason,
             )
+        except Exception as exc:
+            reason = f"Gemini API failure ({str(exc)}). Switching to local fallback."
+            logger.warning(reason)
+            return self._mock_fallback(prompt, start_time, fallback=True, failure_reason=reason)
         finally:
             if should_close:
                 await client.aclose()

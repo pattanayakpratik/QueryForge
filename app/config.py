@@ -40,17 +40,17 @@ class Settings(BaseSettings):
 
     # Model identifiers
     groq_model: str = Field(
-        default="llama-3.3-70b-versatile",
+        default="openai/gpt-oss-120b",
         alias="GROQ_MODEL",
     )
     gemini_model: str = Field(
-        default="gemini-1.5-flash",
+        default="gemini-2.5-flash",
         alias="GEMINI_MODEL",
     )
 
     # Circuit breaker & execution timeouts
-    groq_timeout_seconds: float = Field(default=2.5, alias="GROQ_TIMEOUT_SECONDS")
-    gemini_timeout_seconds: float = Field(default=8.0, alias="GEMINI_TIMEOUT_SECONDS")
+    groq_timeout_seconds: float = Field(default=3.5, alias="GROQ_TIMEOUT_SECONDS")
+    gemini_timeout_seconds: float = Field(default=15.0, alias="GEMINI_TIMEOUT_SECONDS")
 
     # Security & Execution limits
     max_execution_cost: float = Field(default=50000.0, alias="MAX_EXECUTION_COST")
