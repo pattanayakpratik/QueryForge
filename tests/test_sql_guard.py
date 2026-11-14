@@ -1,7 +1,12 @@
 """Tests for SQLGlot AST Firewall and Read-Only Sandbox."""
 
 import unittest
-from app.core.sql_guard import validate_and_sanitize_sql, SQLGuardError
+from app.core.sql_guard import (
+    validate_and_sanitize_sql,
+    inspect_and_sanitize_sql,
+    SQLGuardError,
+    MutationImpact,
+)
 
 
 class TestSQLGuard(unittest.TestCase):
@@ -138,6 +143,44 @@ class TestSQLGuard(unittest.TestCase):
         with self.assertRaises(SQLGuardError) as ctx:
             validate_and_sanitize_sql("   ")
         self.assertEqual(ctx.exception.code, "EMPTY_QUERY")
+
+    def test_read_write_mode_analyzes_update_impact(self):
+        """In read_write mode, UPDATE query is parsed into a MutationImpact assessment."""
+        query = "UPDATE orders SET status = 'refunded' WHERE created_at < '2026-01-01';"
+        sql, stmt_type, impact = inspect_and_sanitize_sql(query, mode="read_write")
+        self.assertEqual(stmt_type, "WRITE")
+        self.assertIsNotNone(impact)
+        self.assertEqual(impact.action_type, "UPDATE")
+        self.assertIn("orders", impact.target_tables)
+        self.assertIn("status", impact.affected_columns)
+        self.assertTrue(impact.has_where_clause)
+        self.assertEqual(impact.risk_level, "MEDIUM")
+
+    def test_read_write_mode_detects_unfiltered_delete_critical_risk(self):
+        """A DELETE without a WHERE clause must be flagged as CRITICAL risk."""
+        query = "DELETE FROM customers;"
+        sql, stmt_type, impact = inspect_and_sanitize_sql(query, mode="read_write")
+        self.assertEqual(stmt_type, "WRITE")
+        self.assertIsNotNone(impact)
+        self.assertEqual(impact.action_type, "DELETE")
+        self.assertIn("customers", impact.target_tables)
+        self.assertFalse(impact.has_where_clause)
+        self.assertEqual(impact.risk_level, "CRITICAL")
+        self.assertIn("CRITICAL HAZARD", impact.description)
+
+    def test_read_write_mode_still_blocks_forbidden_functions(self):
+        """Dangerous functions like pg_sleep or lo_export must be blocked even in read_write mode."""
+        query = "UPDATE customers SET name = pg_sleep(5) WHERE id = 1;"
+        with self.assertRaises(SQLGuardError) as ctx:
+            inspect_and_sanitize_sql(query, mode="read_write")
+        self.assertEqual(ctx.exception.code, "FORBIDDEN_FUNCTION")
+
+    def test_read_only_mode_strictly_rejects_mutation(self):
+        """In read_only mode, mutations must raise SQLGuardError immediately."""
+        query = "DELETE FROM orders WHERE id = 10;"
+        with self.assertRaises(SQLGuardError) as ctx:
+            inspect_and_sanitize_sql(query, mode="read_only")
+        self.assertEqual(ctx.exception.code, "NON_SELECT_ROOT")
 
 
 if __name__ == "__main__":
