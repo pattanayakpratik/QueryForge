@@ -105,15 +105,27 @@ REFUND_REASONS = [
 ]
 
 
-async def seed_ecommerce_database(target_url: str | None = None) -> None:
+async def seed_ecommerce_database(target_url: str | None = None, drop_if_exists: bool = True) -> None:
     """Populate target database with realistic tables and sample records."""
     settings = get_settings()
     db_url = target_url or settings.target_database_url
     engine = get_target_engine(db_url)
 
+    if not drop_if_exists:
+        try:
+            async with engine.connect() as conn:
+                res = await conn.execute(text("SELECT COUNT(*) FROM customers"))
+                count = res.scalar()
+                if count and count > 0:
+                    print(f"[*] Target database already seeded ({count} customers found). Skipping seed.")
+                    return
+        except Exception:
+            pass  # Table does not exist yet; proceed with creation & seed
+
     print(f"[*] Initializing tables on target database: {db_url}")
     async with engine.begin() as conn:
-        await conn.run_sync(DemoBase.metadata.drop_all)
+        if drop_if_exists:
+            await conn.run_sync(DemoBase.metadata.drop_all)
         await conn.run_sync(DemoBase.metadata.create_all)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)

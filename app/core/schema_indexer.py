@@ -18,6 +18,9 @@ from app.database import get_target_engine
 logger = logging.getLogger(__name__)
 
 
+SAFE_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
 class ColumnMetadata(BaseModel):
     """Metadata describing a single table column."""
     name: str
@@ -110,13 +113,14 @@ class SchemaIndexer:
         tables: List[TableMetadata] = []
 
         for name in table_names:
+            clean_name = name.replace("'", "''")
             # Columns via PRAGMA table_info
-            cols_res = await conn.execute(text(f"PRAGMA table_info('{name}')"))
+            cols_res = await conn.execute(text(f"PRAGMA table_info('{clean_name}')"))
             # cid, name, type, notnull, dflt_value, pk
             cols_data = cols_res.fetchall()
 
             # Foreign keys via PRAGMA foreign_key_list
-            fk_res = await conn.execute(text(f"PRAGMA foreign_key_list('{name}')"))
+            fk_res = await conn.execute(text(f"PRAGMA foreign_key_list('{clean_name}')"))
             # id, seq, table, from, to, on_update, on_delete, match
             fk_data = fk_res.fetchall()
 
@@ -233,13 +237,19 @@ class SchemaIndexer:
         return tables
 
     async def _sample_distinct_values(self, conn: Any, table: TableMetadata) -> None:
-        """Sample distinct values for categorical and low-cardinality columns."""
+        """Sample distinct values for categorical and low-cardinality columns with sanitized identifiers."""
+        if not SAFE_IDENTIFIER_PATTERN.match(table.table_name):
+            return
+
         for col in table.columns:
             # Sample only for string/varchar/enum columns that aren't primary keys
             is_string_type = any(t in col.data_type for t in ("CHAR", "TEXT", "STRING", "VARCHAR"))
             if is_string_type and not col.is_primary_key and "id" not in col.name.lower():
+                if not SAFE_IDENTIFIER_PATTERN.match(col.name):
+                    continue
+
                 try:
-                    q = f"SELECT DISTINCT {col.name} FROM {table.table_name} WHERE {col.name} IS NOT NULL LIMIT 3"
+                    q = f'SELECT DISTINCT "{col.name}" FROM "{table.table_name}" WHERE "{col.name}" IS NOT NULL LIMIT 3'
                     res = await conn.execute(text(q))
                     samples = [str(r[0]) for r in res.fetchall() if r[0] is not None]
                     col.sample_values = samples
@@ -384,3 +394,7 @@ class SchemaIndexer:
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [p for _, p in scored[:top_k]]
+
+    def get_indexed_table_names(self, datasource_id: str) -> List[str]:
+        """Return list of indexed table names for a datasource."""
+        return list(self._in_memory_cards.get(datasource_id, {}).keys())

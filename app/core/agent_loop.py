@@ -15,6 +15,7 @@ Execution Lifecycle:
 
 import json
 import time
+import decimal
 import logging
 from typing import AsyncGenerator, Dict, Any, List, Optional
 from pydantic import BaseModel
@@ -179,11 +180,18 @@ class AgentLoop:
                 last_sql = sanitized_sql
             except SQLGuardError as guard_err:
                 error_history.append({"attempt": attempt, "stage": "AST_FIREWALL", "error": guard_err.message})
+                total_duration_ms = (time.perf_counter() - start_time) * 1000.0
                 yield AgentLoopEvent(
                     event_type="error_ast",
                     step_number=step,
                     message=f"AST Firewall blocked query: {guard_err.message}",
-                    data={"code": guard_err.code, "error": guard_err.message},
+                    data={
+                        "code": guard_err.code,
+                        "error": guard_err.message,
+                        "sql": raw_sql,
+                        "status": "BLOCKED_AST",
+                        "execution_time_ms": round(total_duration_ms, 2),
+                    },
                     timestamp=round(time.perf_counter() - start_time, 3),
                 )
                 # AST violations that cannot be healed or security breaches stop execution
@@ -280,11 +288,29 @@ class AgentLoop:
             columns: List[str] = []
 
             async with target_engine.connect() as conn:
+                if not is_sqlite:
+                    await conn.execute(text("SET LOCAL TRANSACTION READ ONLY;"))
+                    await conn.execute(
+                        text(f"SET LOCAL statement_timeout = '{self._settings.statement_timeout_ms}';")
+                    )
+                else:
+                    await conn.execute(text("PRAGMA query_only = ON;"))
+
                 cursor = await conn.execute(text(sanitized_sql))
                 if cursor.returns_rows:
                     columns = list(cursor.keys())
                     for row in cursor.fetchall():
-                        rows_data.append(dict(zip(columns, row)))
+                        row_dict = {}
+                        for col, val in zip(columns, row):
+                            if hasattr(val, "isoformat"):
+                                row_dict[col] = val.isoformat()
+                            elif isinstance(val, decimal.Decimal):
+                                row_dict[col] = float(val)
+                            elif isinstance(val, (int, float, str, bool)) or val is None:
+                                row_dict[col] = val
+                            else:
+                                row_dict[col] = str(val)
+                        rows_data.append(row_dict)
 
             # Step 3b: Auto-Chart & Insight Synthesis
             chart_spec: ChartSpec = synthesize_chart(columns, rows_data, question=question)

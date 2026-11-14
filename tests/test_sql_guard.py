@@ -101,6 +101,19 @@ class TestSQLGuard(unittest.TestCase):
             validate_and_sanitize_sql(query)
         self.assertEqual(ctx.exception.code, "MULTI_STATEMENT_ATTACK")
 
+    def test_blocks_select_into_and_mutation_nodes(self):
+        """SELECT INTO and row locking clauses must be rejected as mutation/locking nodes."""
+        mutation_queries = [
+            "SELECT * INTO new_table FROM customers;",
+            "SELECT id, name FROM customers FOR UPDATE;",
+            "SELECT id, name FROM customers FOR SHARE;",
+        ]
+        for query in mutation_queries:
+            with self.subTest(query=query):
+                with self.assertRaises(SQLGuardError) as ctx:
+                    validate_and_sanitize_sql(query, dialect="postgres")
+                self.assertEqual(ctx.exception.code, "MUTATION_NODE_DETECTED")
+
     def test_blocks_dangerous_functions(self):
         """PostgreSQL dangerous system functions must be rejected."""
         dangerous_queries = [
@@ -108,6 +121,11 @@ class TestSQLGuard(unittest.TestCase):
             "SELECT * FROM customers WHERE id = pg_sleep(5)",
             "SELECT pg_read_file('/etc/passwd')",
             "SELECT dblink_exec('dbname=postgres', 'DROP DATABASE test')",
+            "SELECT pg_terminate_backend(1234)",
+            "SELECT pg_cancel_backend(1234)",
+            "SELECT pg_reload_conf()",
+            "SELECT lo_export(1234, '/tmp/malicious.bin')",
+            "SELECT lo_import('/etc/shadow')",
         ]
         for query in dangerous_queries:
             with self.subTest(query=query):

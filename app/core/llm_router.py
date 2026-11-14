@@ -151,7 +151,28 @@ class LLMRouter:
         if not self._settings.gemini_api_key:
             # When running in mock or unit testing environment without external keys
             latency_ms = (time.perf_counter() - start_time) * 1000.0
-            mock_sql = "SELECT 1;"
+            lower_prompt = prompt.lower()
+            if "drop table" in lower_prompt:
+                mock_sql = "DROP TABLE orders;"
+            elif "user_total_rev" in lower_prompt:
+                if "error" in lower_prompt or "undefinedcolumn" in lower_prompt or "repair" in lower_prompt:
+                    mock_sql = (
+                        "SELECT c.id, c.name, SUM(o.total_amount_cents)/100.0 AS total_revenue "
+                        "FROM customers c JOIN orders o ON c.id = o.customer_id "
+                        "GROUP BY c.id, c.name ORDER BY total_revenue DESC LIMIT 5;"
+                    )
+                else:
+                    mock_sql = "SELECT id, user_total_rev FROM customers LIMIT 5;"
+            elif "refund" in lower_prompt or "revenue" in lower_prompt or "monthly" in lower_prompt:
+                mock_sql = (
+                    "SELECT c.country, COUNT(DISTINCT o.id) AS total_orders, "
+                    "SUM(o.total_amount_cents)/100.0 AS total_revenue "
+                    "FROM customers c JOIN orders o ON c.id = o.customer_id "
+                    "GROUP BY c.country ORDER BY total_revenue DESC LIMIT 5;"
+                )
+            else:
+                mock_sql = "SELECT 1;"
+
             return LLMResult(
                 content=mock_sql,
                 cleaned_sql=mock_sql,

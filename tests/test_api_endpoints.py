@@ -54,26 +54,26 @@ class TestAPIEndpoints(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res_health.json()["status"], "ok")
 
     async def test_datasource_registration_and_list(self):
-        """POST /v1/datasources creates data source and redacts sensitive URI."""
+        """POST /datasources creates data source and redacts sensitive URI."""
         payload = {
             "name": "Analytics Warehouse",
             "dialect": "postgresql",
             "connection_uri": "postgresql+asyncpg://user:pass@localhost:5432/db",
         }
-        res = await self.client.post("/v1/datasources", json=payload)
+        res = await self.client.post("/datasources", json=payload)
         self.assertEqual(res.status_code, 201)
         data = res.json()
         self.assertEqual(data["name"], "Analytics Warehouse")
         self.assertNotIn("connection_uri", data)
         ds_id = data["id"]
 
-        # GET /v1/datasources
-        list_res = await self.client.get("/v1/datasources")
+        # GET /datasources
+        list_res = await self.client.get("/datasources")
         self.assertEqual(list_res.status_code, 200)
         self.assertEqual(len(list_res.json()), 1)
 
-        # GET /v1/datasources/{id}
-        get_res = await self.client.get(f"/v1/datasources/{ds_id}")
+        # GET /datasources/{id}
+        get_res = await self.client.get(f"/datasources/{ds_id}")
         self.assertEqual(get_res.status_code, 200)
         self.assertEqual(get_res.json()["name"], "Analytics Warehouse")
 
@@ -85,7 +85,7 @@ class TestAPIEndpoints(unittest.IsolatedAsyncioTestCase):
             "dialect": "sqlite",
             "connection_uri": "sqlite+aiosqlite:///test.db",
         }
-        ds_res = await self.client.post("/v1/datasources", json=ds_payload)
+        ds_res = await self.client.post("/datasources", json=ds_payload)
         ds_id = ds_res.json()["id"]
 
         golden_payload = {
@@ -93,24 +93,57 @@ class TestAPIEndpoints(unittest.IsolatedAsyncioTestCase):
             "natural_question": "Total sales by region?",
             "verified_sql": "SELECT region, SUM(amount) FROM sales GROUP BY region",
         }
-        create_res = await self.client.post("/v1/golden-queries", json=golden_payload)
+        create_res = await self.client.post("/golden-queries", json=golden_payload)
         self.assertEqual(create_res.status_code, 201)
         golden_id = create_res.json()["id"]
 
-        list_res = await self.client.get(f"/v1/golden-queries?datasource_id={ds_id}")
+        list_res = await self.client.get(f"/golden-queries?datasource_id={ds_id}")
         self.assertEqual(list_res.status_code, 200)
         self.assertEqual(len(list_res.json()), 1)
 
-        del_res = await self.client.delete(f"/v1/golden-queries/{golden_id}")
+        del_res = await self.client.delete(f"/golden-queries/{golden_id}")
         self.assertEqual(del_res.status_code, 204)
 
     async def test_telemetry_metrics_empty_and_populated(self):
-        """GET /v1/metrics/telemetry returns system metrics."""
-        res = await self.client.get("/v1/metrics/telemetry")
+        """GET /metrics/telemetry returns system metrics."""
+        res = await self.client.get("/metrics/telemetry")
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["total_queries"], 0)
         self.assertEqual(data["success_rate"], 0.0)
+
+    async def test_query_stream_auto_provisions_default_demo_db(self):
+        """POST /query/stream with 'default-demo-db' should auto-provision fallback and stream SSE."""
+        payload = {
+            "datasource_id": "default-demo-db",
+            "question": "SELECT 1;",
+        }
+        res = await self.client.post("/query/stream", json=payload)
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("text/event-stream", res.headers.get("content-type", ""))
+        self.assertIn("data: ", res.text)
+
+    async def test_query_ask_auto_provisions_default_demo_db(self):
+        """POST /query/ask with 'default-demo-db' should auto-provision fallback and execute query."""
+        payload = {
+            "datasource_id": "default-demo-db",
+            "question": "SELECT 1;",
+        }
+        res = await self.client.post("/query/ask", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "SUCCESS")
+        self.assertIn("sql", data)
+
+    async def test_query_ask_unknown_datasource_returns_404(self):
+        """POST /query/ask with an unregistered uuid should return 404."""
+        payload = {
+            "datasource_id": "non-existent-uuid-12345",
+            "question": "SELECT 1;",
+        }
+        res = await self.client.post("/query/ask", json=payload)
+        self.assertEqual(res.status_code, 404)
+        self.assertIn("does not exist", res.json()["detail"])
 
 
 if __name__ == "__main__":

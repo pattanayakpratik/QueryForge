@@ -53,6 +53,11 @@ def _get_or_create_cipher() -> Fernet:
     """Retrieve or derive the Fernet symmetric cipher for encrypting connection strings."""
     key = settings.secret_encryption_key
     if not key:
+        if settings.app_env.lower() == "production":
+            raise RuntimeError(
+                "CRITICAL SECURITY CONFIGURATION: In production mode, SECRET_ENCRYPTION_KEY "
+                "must be configured in environment variables to prevent credential compromise."
+            )
         # Deterministic 32-byte key for local development
         default_seed = b"queryforge_32_byte_master_key_1!"
         key = base64.urlsafe_b64encode(default_seed).decode()

@@ -1,18 +1,44 @@
 """Query endpoints for natural language Text-to-SQL execution and SSE live streaming."""
 
 import json
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_metadata_db, decrypt_connection_uri
+from app.config import get_settings
+from app.database import get_metadata_db, decrypt_connection_uri, encrypt_connection_uri
 from app.models.metadata import DataSource, QueryAuditLog
 from app.schemas.metadata import QueryAskRequest, QueryAskResponse
 from app.core.agent_loop import AgentLoop, AgentExecutionResult
 
+logger = logging.getLogger(__name__)
+settings = get_settings()
 router = APIRouter()
 agent_loop = AgentLoop()
+
+
+async def _get_or_create_datasource(db: AsyncSession, datasource_id: str) -> Optional[DataSource]:
+    """Retrieve data source or auto-provision default-demo-db fallback."""
+    ds = await db.get(DataSource, datasource_id)
+    if not ds and datasource_id == "default-demo-db":
+        dialect = "postgresql" if "postgres" in settings.target_database_url else "sqlite"
+        ds = DataSource(
+            id="default-demo-db",
+            name="Demo SaaS & E-Commerce DB",
+            dialect=dialect,
+            connection_uri_encrypted=encrypt_connection_uri(settings.target_database_url),
+            tables_indexed=5,
+        )
+        db.add(ds)
+        try:
+            await db.commit()
+            await db.refresh(ds)
+        except Exception:
+            await db.rollback()
+            ds = await db.get(DataSource, datasource_id)
+    return ds
 
 
 @router.post("/ask", response_model=QueryAskResponse)
@@ -21,7 +47,7 @@ async def ask_query(
     db: AsyncSession = Depends(get_metadata_db),
 ) -> QueryAskResponse:
     """Execute natural language query through Schema RAG, AST firewall, and self-healing loop."""
-    ds = await db.get(DataSource, payload.datasource_id)
+    ds = await _get_or_create_datasource(db, payload.datasource_id)
     if not ds:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -29,6 +55,16 @@ async def ask_query(
         )
 
     target_uri = decrypt_connection_uri(ds.connection_uri_encrypted)
+
+    if ds.id == "default-demo-db" and not agent_loop.schema_indexer.get_indexed_table_names(ds.id):
+        try:
+            await agent_loop.schema_indexer.index_datasource(
+                datasource_id=ds.id,
+                connection_uri=target_uri,
+                dialect=ds.dialect,
+            )
+        except Exception as exc:
+            logger.warning(f"On-demand schema indexing of default-demo-db skipped: {exc}")
 
     result: AgentExecutionResult = await agent_loop.execute_query(
         datasource_id=ds.id,
@@ -93,7 +129,7 @@ async def stream_query_execution(
     db: AsyncSession = Depends(get_metadata_db),
 ):
     """Server-Sent Events (SSE) streaming endpoint showing live step-by-step agent reasoning."""
-    ds = await db.get(DataSource, payload.datasource_id)
+    ds = await _get_or_create_datasource(db, payload.datasource_id)
     if not ds:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -102,6 +138,16 @@ async def stream_query_execution(
 
     target_uri = decrypt_connection_uri(ds.connection_uri_encrypted)
 
+    if ds.id == "default-demo-db" and not agent_loop.schema_indexer.get_indexed_table_names(ds.id):
+        try:
+            await agent_loop.schema_indexer.index_datasource(
+                datasource_id=ds.id,
+                connection_uri=target_uri,
+                dialect=ds.dialect,
+            )
+        except Exception as exc:
+            logger.warning(f"On-demand schema indexing of default-demo-db skipped: {exc}")
+
     async def event_generator():
         async for event in agent_loop.execute_query_stream(
             datasource_id=ds.id,
@@ -109,7 +155,7 @@ async def stream_query_execution(
             connection_uri=target_uri,
             dialect=ds.dialect,
         ):
-            event_json = json.dumps(event.model_dump())
+            event_json = json.dumps(event.model_dump(), default=str)
             yield f"data: {event_json}\n\n"
 
     return StreamingResponse(

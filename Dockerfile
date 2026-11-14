@@ -37,8 +37,9 @@ FROM python:3.12-slim AS runner
 
 WORKDIR /app
 
-# Create non-root execution user
-RUN groupadd -r queryforge && useradd -r -g queryforge queryforge
+# Create non-root execution user and persistent storage directories
+RUN groupadd -r queryforge && useradd -r -g queryforge queryforge && \
+    mkdir -p /app/chroma_db && chown -R queryforge:queryforge /app
 
 # Copy virtualenv from builder
 COPY --from=builder /opt/venv /opt/venv
