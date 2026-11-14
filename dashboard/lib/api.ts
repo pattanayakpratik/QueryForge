@@ -20,6 +20,17 @@ export interface ChartConfig {
   summary: string;
 }
 
+export interface MutationImpact {
+  action_type: string;
+  target_tables: string[];
+  affected_columns: string[];
+  has_where_clause: boolean;
+  where_clause_preview?: string | null;
+  risk_level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  description: string;
+  estimated_affected_rows?: number | null;
+}
+
 export interface QueryResult {
   sql: string;
   columns: string[];
@@ -29,17 +40,19 @@ export interface QueryResult {
   explain_cost?: number;
   provider_used: string;
   self_heal_attempts: number;
-  status: "SUCCESS" | "BLOCKED_AST" | "BLOCKED_COST" | "FAILED_EXECUTION";
+  status: "SUCCESS" | "BLOCKED_AST" | "BLOCKED_COST" | "FAILED_EXECUTION" | "AWAITING_CONFIRMATION" | "MUTATION_COMMITTED";
   chart_config?: ChartConfig;
   summary?: string;
   error_history?: any[];
+  mutation_impact?: MutationImpact;
+  rows_affected?: number;
 }
 
 export interface RecruiterDemoPrompt {
   id: string;
   label: string;
   tag: string;
-  color: "indigo" | "amber" | "rose";
+  color: "indigo" | "amber" | "rose" | "purple";
   prompt: string;
   description: string;
 }
@@ -96,6 +109,14 @@ export const RECRUITER_DEMO_PROMPTS: RecruiterDemoPrompt[] = [
     prompt: "Test Security Guardrail: DROP TABLE orders;",
     description: "Triggers deterministic compile-time AST rejection in <2ms, completely blocking DDL execution.",
   },
+  {
+    id: "demo-write-guardrail",
+    label: "Human-in-the-Loop Write Gate",
+    tag: "Impact Assessment",
+    color: "purple",
+    prompt: "UPDATE customers SET status = 'inactive' WHERE id > 100;",
+    description: "In Read-Write mode, evaluates affected rows via rollback dry-run and requires user confirmation.",
+  },
 ];
 
 /**
@@ -106,10 +127,16 @@ export async function streamQueryExecution(
   question: string,
   onEvent: (event: AgentStepEvent) => void,
   onComplete: (result: QueryResult) => void,
-  onError: (errorMsg: string) => void
+  onError: (errorMsg: string) => void,
+  mode: "read_only" | "read_write" = "read_only"
 ): Promise<void> {
   const isSelfHealingDemo = question.toLowerCase().includes("user_total_rev");
   const isSecurityDemo = question.toLowerCase().includes("drop table") || question.toLowerCase().includes("orders;");
+  const isWriteDemo =
+    mode === "read_write" &&
+    (question.toLowerCase().includes("update ") ||
+      question.toLowerCase().includes("delete ") ||
+      question.toLowerCase().includes("insert "));
 
   try {
     // Connect directly to FastAPI backend service
@@ -117,7 +144,7 @@ export async function streamQueryExecution(
     const response = await fetch(`${apiBase}/query/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ datasource_id: datasourceId, question }),
+      body: JSON.stringify({ datasource_id: datasourceId, question, mode }),
     });
 
     if (response.ok && response.body) {
@@ -139,6 +166,24 @@ export async function streamQueryExecution(
               const event: AgentStepEvent = JSON.parse(line.replace("data: ", ""));
               onEvent(event);
 
+              // Handle Awaiting Human Confirmation Gate
+              if (event.event_type === "step_awaiting_confirmation") {
+                onComplete({
+                  sql: event.data.sql || "",
+                  columns: [],
+                  rows: [],
+                  row_count: 0,
+                  execution_time_ms: event.data.execution_time_ms || 0,
+                  explain_cost: undefined,
+                  provider_used: event.data.provider_used || "GROQ",
+                  self_heal_attempts: 0,
+                  status: "AWAITING_CONFIRMATION",
+                  summary: event.message,
+                  mutation_impact: event.data.mutation_impact,
+                });
+                return;
+              }
+
               if (
                 event.event_type === "step_completed" ||
                 event.event_type === "error_ast" ||
@@ -158,6 +203,7 @@ export async function streamQueryExecution(
                   chart_config: event.data.chart_config,
                   summary: event.message || event.data.summary,
                   error_history: event.data.error_history,
+                  mutation_impact: event.data.mutation_impact,
                 });
                 return;
               }
@@ -174,13 +220,22 @@ export async function streamQueryExecution(
   }
 
   // Realistic Interactive Studio Simulation (Ensures seamless recruiter live demos)
-  await runSimulatedAgentStream(question, isSelfHealingDemo, isSecurityDemo, onEvent, onComplete, onError);
+  await runSimulatedAgentStream(
+    question,
+    isSelfHealingDemo,
+    isSecurityDemo,
+    isWriteDemo,
+    onEvent,
+    onComplete,
+    onError
+  );
 }
 
 async function runSimulatedAgentStream(
   question: string,
   isSelfHealing: boolean,
   isSecurity: boolean,
+  isWrite: boolean,
   onEvent: (event: AgentStepEvent) => void,
   onComplete: (result: QueryResult) => void,
   onError: (errorMsg: string) => void
@@ -205,6 +260,79 @@ async function runSimulatedAgentStream(
     timestamp: 0.12,
   });
   await sleep(400);
+
+  if (isWrite) {
+    // Write demo in Read-Write mode: trigger Human-in-the-Loop Confirmation Gate
+    onEvent({
+      event_type: "step_sql_drafted",
+      step_number: 3,
+      message: "Generated SQL syntax: UPDATE customers SET status = 'inactive' WHERE id > 100;",
+      data: {
+        sql: "UPDATE customers SET status = 'inactive' WHERE id > 100;",
+        provider: "GROQ",
+        model: "llama-3.3-70b-versatile",
+      },
+      timestamp: 0.22,
+    });
+    await sleep(350);
+
+    onEvent({
+      event_type: "step_ast_validating",
+      step_number: 4,
+      message: "AST Firewall: Mutation detected in Read-Write mode. Analyzing write impact...",
+      data: { sql: "UPDATE customers SET status = 'inactive' WHERE id > 100;" },
+      timestamp: 0.28,
+    });
+    await sleep(350);
+
+    const mockImpact: MutationImpact = {
+      action_type: "UPDATE",
+      target_tables: ["customers"],
+      affected_columns: ["status"],
+      has_where_clause: true,
+      where_clause_preview: "id > 100",
+      risk_level: "MEDIUM",
+      description: "Modifies 1 column(s) on 'customers' with WHERE clause filter.",
+      estimated_affected_rows: 14,
+    };
+
+    onEvent({
+      event_type: "step_impact_evaluating",
+      step_number: 5,
+      message: "Simulating dry-run transaction rollback: Estimated 14 affected rows on [customers].",
+      data: { action: "UPDATE", tables: ["customers"], estimated_affected_rows: 14 },
+      timestamp: 0.36,
+    });
+    await sleep(400);
+
+    onEvent({
+      event_type: "step_awaiting_confirmation",
+      step_number: 6,
+      message: "Write Action Detected (UPDATE): Human confirmation required before execution.",
+      data: {
+        status: "AWAITING_CONFIRMATION",
+        sql: "UPDATE customers SET status = 'inactive' WHERE id > 100;",
+        mutation_impact: mockImpact,
+        mode: "read_write",
+        execution_time_ms: 360,
+      },
+      timestamp: 0.38,
+    });
+
+    onComplete({
+      sql: "UPDATE customers SET status = 'inactive' WHERE id > 100;",
+      columns: [],
+      rows: [],
+      row_count: 0,
+      execution_time_ms: 360,
+      provider_used: "GROQ",
+      self_heal_attempts: 0,
+      status: "AWAITING_CONFIRMATION",
+      summary: "Write Action Detected (UPDATE): Human confirmation required before execution.",
+      mutation_impact: mockImpact,
+    });
+    return;
+  }
 
   if (isSecurity) {
     // Security demo: AST Firewall triggers red alert
@@ -521,6 +649,37 @@ export async function syncDataSourceSchema(datasourceId: string): Promise<DataSo
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "Failed to sync schema." }));
     throw new Error(err.detail || "Failed to sync schema.");
+  }
+  return await res.json();
+}
+
+export interface MutationConfirmResult {
+  status: string;
+  sql: string;
+  rows_affected: number;
+  execution_time_ms: number;
+  message: string;
+}
+
+/**
+ * Confirm and execute a write/mutation SQL statement committed by human-in-the-loop signoff.
+ */
+export async function confirmMutationExecution(payload: {
+  datasourceId: string;
+  sql: string;
+}): Promise<MutationConfirmResult> {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const res = await fetch(`${apiBase}/query/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      datasource_id: payload.datasourceId,
+      sql: payload.sql,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Mutation confirmation failed." }));
+    throw new Error(err.detail || "Failed to commit mutation.");
   }
   return await res.json();
 }

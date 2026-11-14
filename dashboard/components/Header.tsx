@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { ShieldCheck, Cpu, Github, Zap } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Cpu, Github, Zap } from "lucide-react";
 import { DatabaseSelector } from "@/components/DatabaseSelector";
 import { DataSourceInfo } from "@/lib/api";
 
@@ -12,6 +12,8 @@ interface HeaderProps {
   onOpenConnectModal: () => void;
   onOpenSchemaModal: () => void;
   onDeleteDatasource: (dsId: string) => void;
+  studioMode: "read_only" | "read_write";
+  onToggleStudioMode: (mode: "read_only" | "read_write") => void;
 }
 
 export function Header({
@@ -21,6 +23,8 @@ export function Header({
   onOpenConnectModal,
   onOpenSchemaModal,
   onDeleteDatasource,
+  studioMode,
+  onToggleStudioMode,
 }: HeaderProps) {
   return (
     <header className="border-b border-slate-800 bg-[#0c1220]/80 backdrop-blur-md sticky top-0 z-50 px-6 py-3.5">
@@ -63,11 +67,33 @@ export function Header({
             <span className="text-[11px] font-medium">Groq 70B <span className="text-slate-500">→</span> Gemini 1.5</span>
           </div>
 
-          {/* AST Firewall */}
-          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-800/40 text-emerald-400">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-            <span className="text-[11px] font-medium">SQLGlot Guard: Active</span>
-          </div>
+          {/* Read-Only vs Read-Write Studio Mode Switcher */}
+          <button
+            type="button"
+            onClick={() => onToggleStudioMode(studioMode === "read_only" ? "read_write" : "read_only")}
+            title={
+              studioMode === "read_only"
+                ? "Strict Read-Only Mode (All mutations blocked by AST firewall). Click to switch to Read-Write."
+                : "Read-Write Mode (Mutations permitted with Human Impact Confirmation gate). Click to switch to Read-Only."
+            }
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-[11px] font-semibold cursor-pointer ${
+              studioMode === "read_only"
+                ? "bg-emerald-950/40 border-emerald-800/40 text-emerald-300 hover:bg-emerald-900/50"
+                : "bg-amber-950/40 border-amber-800/50 text-amber-300 hover:bg-amber-900/50 shadow-sm shadow-amber-900/20"
+            }`}
+          >
+            {studioMode === "read_only" ? (
+              <>
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+                <span>Mode: Read-Only</span>
+              </>
+            ) : (
+              <>
+                <ShieldAlert className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
+                <span>Mode: Read-Write (HITL)</span>
+              </>
+            )}
+          </button>
 
           {/* GitHub link */}
           <a

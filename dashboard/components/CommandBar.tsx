@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
-import { Search, Sparkles, AlertOctagon, RotateCw, ArrowRight, Loader2 } from "lucide-react";
+import { Search, Sparkles, AlertOctagon, RotateCw, ArrowRight, Loader2, ShieldAlert } from "lucide-react";
 import { RECRUITER_DEMO_PROMPTS, RecruiterDemoPrompt } from "@/lib/api";
 
 interface CommandBarProps {
-  onSearch: (question: string) => void;
+  onSearch: (question: string, suggestedMode?: "read_only" | "read_write") => void;
   isLoading: boolean;
 }
 
@@ -20,7 +20,8 @@ export function CommandBar({ onSearch, isLoading }: CommandBarProps) {
 
   const handleSelectDemo = (demo: RecruiterDemoPrompt) => {
     setQuery(demo.prompt);
-    onSearch(demo.prompt);
+    const suggestedMode = demo.id === "demo-write-guardrail" ? "read_write" : "read_only";
+    onSearch(demo.prompt, suggestedMode);
   };
 
   return (
@@ -77,6 +78,9 @@ export function CommandBar({ onSearch, isLoading }: CommandBarProps) {
             } else if (demo.id === "demo-security-guardrail") {
               Icon = AlertOctagon;
               badgeStyle = "bg-rose-500/10 border-rose-500/30 hover:border-rose-500/60 text-rose-300";
+            } else if (demo.id === "demo-write-guardrail") {
+              Icon = ShieldAlert;
+              badgeStyle = "bg-purple-500/10 border-purple-500/30 hover:border-purple-500/60 text-purple-300";
             }
 
             return (
