@@ -24,7 +24,7 @@ from app.config import get_settings
 from app.database import get_target_engine
 from app.core.sql_guard import validate_and_sanitize_sql, inspect_and_sanitize_sql, SQLGuardError, MutationImpact
 from app.core.llm_router import LLMRouter, LLMResult
-from app.core.schema_indexer import SchemaIndexer
+from app.core.schema_indexer import SchemaIndexer, get_schema_indexer
 from app.core.chart_synthesizer import synthesize_chart, ChartSpec
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ class AgentLoop:
     ):
         self._settings = get_settings()
         self.llm_router = llm_router or LLMRouter()
-        self.schema_indexer = schema_indexer or SchemaIndexer()
+        self.schema_indexer = schema_indexer or get_schema_indexer()
 
     async def estimate_mutation_affected_rows(
         self,
@@ -163,6 +163,10 @@ class AgentLoop:
             query=question,
             top_k=5,
         )
+        if not table_cards:
+            # Fallback: if no specific table matched, load all available table cards for this datasource
+            table_cards = self.schema_indexer.get_all_table_cards(datasource_id)[:5]
+
         golden_examples = self.schema_indexer.retrieve_golden_queries(
             datasource_id=datasource_id,
             query=question,

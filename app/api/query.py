@@ -61,7 +61,7 @@ async def ask_query(
 
     target_uri = decrypt_connection_uri(ds.connection_uri_encrypted)
 
-    if ds.id == "default-demo-db" and not agent_loop.schema_indexer.get_indexed_table_names(ds.id):
+    if not agent_loop.schema_indexer.get_indexed_table_names(ds.id):
         try:
             await agent_loop.schema_indexer.index_datasource(
                 datasource_id=ds.id,
@@ -69,7 +69,7 @@ async def ask_query(
                 dialect=ds.dialect,
             )
         except Exception as exc:
-            logger.warning(f"On-demand schema indexing of default-demo-db skipped: {exc}")
+            logger.warning(f"On-demand schema indexing of datasource '{ds.id}' skipped: {exc}")
 
     result: AgentExecutionResult = await agent_loop.execute_query(
         datasource_id=ds.id,
@@ -146,7 +146,7 @@ async def stream_query_execution(
 
     target_uri = decrypt_connection_uri(ds.connection_uri_encrypted)
 
-    if ds.id == "default-demo-db" and not agent_loop.schema_indexer.get_indexed_table_names(ds.id):
+    if not agent_loop.schema_indexer.get_indexed_table_names(ds.id):
         try:
             await agent_loop.schema_indexer.index_datasource(
                 datasource_id=ds.id,
@@ -154,7 +154,7 @@ async def stream_query_execution(
                 dialect=ds.dialect,
             )
         except Exception as exc:
-            logger.warning(f"On-demand schema indexing of default-demo-db skipped: {exc}")
+            logger.warning(f"On-demand schema indexing of datasource '{ds.id}' skipped: {exc}")
 
     async def event_generator():
         async for event in agent_loop.execute_query_stream(

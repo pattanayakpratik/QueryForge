@@ -13,11 +13,11 @@ from app.schemas.metadata import (
     DataSourceTestRequest,
     DataSourceTestResponse,
 )
-from app.core.schema_indexer import SchemaIndexer
+from app.core.schema_indexer import SchemaIndexer, get_schema_indexer
 from app.core.uri_utils import normalize_database_uri, test_database_connection_readonly
 
 router = APIRouter()
-schema_indexer = SchemaIndexer()
+schema_indexer = get_schema_indexer()
 
 
 @router.post("/test", response_model=DataSourceTestResponse)

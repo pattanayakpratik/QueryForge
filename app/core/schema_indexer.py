@@ -241,7 +241,10 @@ class SchemaIndexer:
         if not SAFE_IDENTIFIER_PATTERN.match(table.table_name):
             return
 
+        sampled_count = 0
         for col in table.columns:
+            if sampled_count >= 10:
+                break
             # Sample only for string/varchar/enum columns that aren't primary keys
             is_string_type = any(t in col.data_type for t in ("CHAR", "TEXT", "STRING", "VARCHAR"))
             if is_string_type and not col.is_primary_key and "id" not in col.name.lower():
@@ -253,6 +256,7 @@ class SchemaIndexer:
                     res = await conn.execute(text(q))
                     samples = [str(r[0]) for r in res.fetchall() if r[0] is not None]
                     col.sample_values = samples
+                    sampled_count += 1
                 except Exception:
                     pass
 
@@ -397,4 +401,53 @@ class SchemaIndexer:
 
     def get_indexed_table_names(self, datasource_id: str) -> List[str]:
         """Return list of indexed table names for a datasource."""
-        return list(self._in_memory_cards.get(datasource_id, {}).keys())
+        names = list(self._in_memory_cards.get(datasource_id, {}).keys())
+        if names:
+            return names
+
+        # Fallback to ChromaDB if in-memory dictionary is cold
+        if self._chroma_client:
+            try:
+                collection_name = f"ds_{datasource_id.replace('-', '_')}"
+                collection = self._chroma_client.get_collection(
+                    name=collection_name,
+                    embedding_function=self._embedding_function,
+                )
+                data = collection.get()
+                if data and data.get("metadatas"):
+                    return [m["table_name"] for m in data["metadatas"] if m and "table_name" in m]
+            except Exception:
+                pass
+        return []
+
+    def get_all_table_cards(self, datasource_id: str) -> List[str]:
+        """Return all table markdown cards for a datasource."""
+        cards_dict = self._in_memory_cards.get(datasource_id, {})
+        if cards_dict:
+            return [m.markdown_card for m in cards_dict.values()]
+
+        # Fallback to ChromaDB
+        if self._chroma_client:
+            try:
+                collection_name = f"ds_{datasource_id.replace('-', '_')}"
+                collection = self._chroma_client.get_collection(
+                    name=collection_name,
+                    embedding_function=self._embedding_function,
+                )
+                data = collection.get()
+                if data and data.get("documents"):
+                    return data["documents"]
+            except Exception:
+                pass
+        return []
+
+
+_global_schema_indexer: Optional[SchemaIndexer] = None
+
+
+def get_schema_indexer() -> SchemaIndexer:
+    """Retrieve shared singleton SchemaIndexer instance."""
+    global _global_schema_indexer
+    if _global_schema_indexer is None:
+        _global_schema_indexer = SchemaIndexer()
+    return _global_schema_indexer

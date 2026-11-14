@@ -111,7 +111,7 @@ class LLMRouter:
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.1,
-            "max_tokens": 1024,
+            "max_tokens": 2048,
         }
 
         client = self._http_client or httpx.AsyncClient(timeout=self._settings.groq_timeout_seconds)
@@ -216,7 +216,7 @@ class LLMRouter:
             ],
             "generationConfig": {
                 "temperature": 0.1,
-                "maxOutputTokens": 1024,
+                "maxOutputTokens": 2048,
             },
         }
 
