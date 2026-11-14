@@ -71,6 +71,24 @@ class QueryAskRequest(BaseModel):
     """Natural language query execution request."""
     datasource_id: str
     question: str = Field(..., min_length=3, description="Natural language question")
+    mode: str = Field(default="read_only", description="'read_only' or 'read_write'")
+
+
+class MutationConfirmRequest(BaseModel):
+    """Payload to confirm execution of a human-reviewed write query."""
+    datasource_id: str
+    sql: str = Field(..., min_length=5, description="Confirmed SQL statement to commit")
+
+
+class MutationConfirmResponse(BaseModel):
+    """Response returned upon committing a confirmed mutation."""
+    status: str
+    sql: str
+    rows_affected: Optional[int] = None
+    action_type: str
+    target_tables: List[str] = []
+    execution_time_ms: float
+    message: str
 
 
 class QueryAskResponse(BaseModel):
@@ -86,6 +104,8 @@ class QueryAskResponse(BaseModel):
     status: str
     chart_config: Optional[Dict[str, Any]] = None
     summary: Optional[str] = None
+    requires_confirmation: bool = False
+    mutation_impact: Optional[Dict[str, Any]] = None
 
 
 class TelemetryResponse(BaseModel):

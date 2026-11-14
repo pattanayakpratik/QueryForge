@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from app.config import get_settings
 from app.database import get_target_engine
-from app.core.sql_guard import validate_and_sanitize_sql, SQLGuardError
+from app.core.sql_guard import validate_and_sanitize_sql, inspect_and_sanitize_sql, SQLGuardError, MutationImpact
 from app.core.llm_router import LLMRouter, LLMResult
 from app.core.schema_indexer import SchemaIndexer
 from app.core.chart_synthesizer import synthesize_chart, ChartSpec
@@ -49,10 +49,12 @@ class AgentExecutionResult(BaseModel):
     explain_cost: Optional[float] = None
     provider_used: str
     self_heal_attempts: int
-    status: str  # 'SUCCESS', 'BLOCKED_AST', 'BLOCKED_COST', 'FAILED_EXECUTION'
+    status: str  # 'SUCCESS', 'BLOCKED_AST', 'BLOCKED_COST', 'FAILED_EXECUTION', 'AWAITING_CONFIRMATION'
     error_history: List[Dict[str, Any]] = []
     chart_config: Optional[Dict[str, Any]] = None
     summary: Optional[str] = None
+    requires_confirmation: bool = False
+    mutation_impact: Optional[Dict[str, Any]] = None
 
 
 class AgentLoop:
@@ -67,12 +69,79 @@ class AgentLoop:
         self.llm_router = llm_router or LLMRouter()
         self.schema_indexer = schema_indexer or SchemaIndexer()
 
+    async def estimate_mutation_affected_rows(
+        self,
+        connection_uri: str,
+        dialect: str,
+        sql: str,
+    ) -> Optional[int]:
+        """Estimate affected row count via dry-run transaction with guaranteed rollback."""
+        cleaned_upper = sql.strip().upper()
+        if any(cleaned_upper.startswith(kw) for kw in ("DROP", "ALTER", "CREATE", "TRUNCATE")):
+            return None
+
+        target_engine = get_target_engine(connection_uri)
+        try:
+            async with target_engine.connect() as conn:
+                trans = await conn.begin()
+                try:
+                    res = await conn.execute(text(sql))
+                    count = res.rowcount
+                    return count if count is not None and count >= 0 else None
+                finally:
+                    await trans.rollback()
+        except Exception:
+            return None
+
+    async def execute_confirmed_mutation(
+        self,
+        datasource_id: str,
+        connection_uri: str,
+        dialect: str,
+        sql: str,
+    ) -> Dict[str, Any]:
+        """Execute a human-confirmed mutation and commit it to the database."""
+        start_time = time.perf_counter()
+        is_sqlite = "sqlite" in dialect.lower() or "sqlite" in connection_uri.lower()
+
+        # Re-verify through AST firewall in read_write mode
+        sanitized_sql, stmt_type, impact = inspect_and_sanitize_sql(
+            sql,
+            dialect="postgres" if not is_sqlite else "sqlite",
+            mode="read_write",
+        )
+
+        target_engine = get_target_engine(connection_uri)
+        rows_affected = 0
+        async with target_engine.connect() as conn:
+            res = await conn.execute(text(sanitized_sql))
+            rows_affected = res.rowcount if res.rowcount is not None and res.rowcount >= 0 else 0
+            await conn.commit()
+
+        latency_ms = round((time.perf_counter() - start_time) * 1000.0, 2)
+        action = impact.action_type if impact else "WRITE"
+        tables = impact.target_tables if impact else []
+
+        return {
+            "status": "MUTATION_COMMITTED",
+            "sql": sanitized_sql,
+            "rows_affected": rows_affected,
+            "action_type": action,
+            "target_tables": tables,
+            "execution_time_ms": latency_ms,
+            "message": (
+                f"Successfully executed and committed {action} on [{', '.join(tables)}]. "
+                f"{rows_affected} row(s) affected ({latency_ms}ms)."
+            ),
+        }
+
     async def execute_query_stream(
         self,
         datasource_id: str,
         question: str,
         connection_uri: str,
         dialect: str = "postgresql",
+        mode: str = "read_only",
     ) -> AsyncGenerator[AgentLoopEvent, None]:
         """Run the end-to-end self-healing loop and yield streaming SSE events."""
         start_time = time.perf_counter()
@@ -172,10 +241,11 @@ class AgentLoop:
             )
 
             try:
-                sanitized_sql = validate_and_sanitize_sql(
+                sanitized_sql, stmt_type, mutation_impact = inspect_and_sanitize_sql(
                     raw_sql,
                     dialect="postgres" if not is_sqlite else "sqlite",
                     default_limit=self._settings.default_row_limit,
+                    mode=mode,
                 )
                 last_sql = sanitized_sql
             except SQLGuardError as guard_err:
@@ -195,6 +265,42 @@ class AgentLoop:
                     timestamp=round(time.perf_counter() - start_time, 3),
                 )
                 # AST violations that cannot be healed or security breaches stop execution
+                return
+
+            # If write statement in read_write mode, trigger Human-In-The-Loop Confirmation Gate
+            if stmt_type == "WRITE" and mutation_impact is not None:
+                step += 1
+                yield AgentLoopEvent(
+                    event_type="step_impact_evaluating",
+                    step_number=step,
+                    message=f"Evaluating mutation impact ({mutation_impact.action_type}) on [{', '.join(mutation_impact.target_tables)}]...",
+                    data={"action": mutation_impact.action_type, "tables": mutation_impact.target_tables},
+                    timestamp=round(time.perf_counter() - start_time, 3),
+                )
+
+                # Safe dry run rollback to measure exact impacted rows
+                est_rows = await self.estimate_mutation_affected_rows(
+                    connection_uri=connection_uri,
+                    dialect=dialect,
+                    sql=sanitized_sql,
+                )
+                mutation_impact.estimated_affected_rows = est_rows
+
+                step += 1
+                total_duration_ms = (time.perf_counter() - start_time) * 1000.0
+                yield AgentLoopEvent(
+                    event_type="step_awaiting_confirmation",
+                    step_number=step,
+                    message=f"Write Action Detected ({mutation_impact.action_type}): Human confirmation required before execution.",
+                    data={
+                        "status": "AWAITING_CONFIRMATION",
+                        "sql": sanitized_sql,
+                        "mutation_impact": mutation_impact.model_dump(),
+                        "mode": mode,
+                        "execution_time_ms": round(total_duration_ms, 2),
+                    },
+                    timestamp=round(time.perf_counter() - start_time, 3),
+                )
                 return
 
             yield AgentLoopEvent(
@@ -358,13 +464,35 @@ class AgentLoop:
         question: str,
         connection_uri: str,
         dialect: str = "postgresql",
+        mode: str = "read_only",
     ) -> AgentExecutionResult:
         """Run the self-healing loop synchronously to return the final execution result."""
         last_event: Optional[AgentLoopEvent] = None
-        async for event in self.execute_query_stream(datasource_id, question, connection_uri, dialect):
+        async for event in self.execute_query_stream(
+            datasource_id=datasource_id,
+            question=question,
+            connection_uri=connection_uri,
+            dialect=dialect,
+            mode=mode,
+        ):
             last_event = event
 
-        if last_event and last_event.event_type == "step_completed":
+        if last_event and last_event.event_type == "step_awaiting_confirmation":
+            d = last_event.data
+            return AgentExecutionResult(
+                sql=d.get("sql", ""),
+                columns=[],
+                rows=[],
+                row_count=0,
+                execution_time_ms=d.get("execution_time_ms", 0.0),
+                provider_used="LLM",
+                self_heal_attempts=0,
+                status="AWAITING_CONFIRMATION",
+                requires_confirmation=True,
+                mutation_impact=d.get("mutation_impact"),
+                summary=last_event.message,
+            )
+        elif last_event and last_event.event_type == "step_completed":
             d = last_event.data
             return AgentExecutionResult(
                 sql=d.get("sql", ""),
