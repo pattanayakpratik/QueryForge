@@ -1,9 +1,27 @@
 "use client";
 
 import React from "react";
-import { ShieldCheck, Cpu, Database, Github, Zap } from "lucide-react";
+import { ShieldCheck, Cpu, Github, Zap } from "lucide-react";
+import { DatabaseSelector } from "@/components/DatabaseSelector";
+import { DataSourceInfo } from "@/lib/api";
 
-export function Header() {
+interface HeaderProps {
+  activeDatasource: DataSourceInfo;
+  datasources: DataSourceInfo[];
+  onSelectDatasource: (ds: DataSourceInfo) => void;
+  onOpenConnectModal: () => void;
+  onOpenSchemaModal: () => void;
+  onDeleteDatasource: (dsId: string) => void;
+}
+
+export function Header({
+  activeDatasource,
+  datasources,
+  onSelectDatasource,
+  onOpenConnectModal,
+  onOpenSchemaModal,
+  onDeleteDatasource,
+}: HeaderProps) {
   return (
     <header className="border-b border-slate-800 bg-[#0c1220]/80 backdrop-blur-md sticky top-0 z-50 px-6 py-3.5">
       <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -29,20 +47,24 @@ export function Header() {
 
         {/* Telemetry & Badges */}
         <div className="flex items-center gap-2.5 text-xs">
-          {/* Target DB */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 text-slate-300">
-            <Database className="h-3.5 w-3.5 text-emerald-400" />
-            <span className="text-[11px] font-medium">Demo SaaS DB (5 Tables)</span>
-          </div>
+          {/* Active Target DB Selector */}
+          <DatabaseSelector
+            activeDatasource={activeDatasource}
+            datasources={datasources}
+            onSelectDatasource={onSelectDatasource}
+            onOpenConnectModal={onOpenConnectModal}
+            onOpenSchemaModal={onOpenSchemaModal}
+            onDeleteDatasource={onDeleteDatasource}
+          />
 
           {/* Model Router */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 text-slate-300">
+          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
             <Cpu className="h-3.5 w-3.5 text-indigo-400" />
             <span className="text-[11px] font-medium">Groq 70B <span className="text-slate-500">→</span> Gemini 1.5</span>
           </div>
 
           {/* AST Firewall */}
-          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-950/40 border border-emerald-800/40 text-emerald-400">
+          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-800/40 text-emerald-400">
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
             <span className="text-[11px] font-medium">SQLGlot Guard: Active</span>
           </div>
@@ -52,7 +74,7 @@ export function Header() {
             href="https://github.com/pattanayakpratik/QueryForge"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800/70 hover:bg-slate-700/80 border border-slate-700 text-slate-200 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800/70 hover:bg-slate-700/80 border border-slate-700 text-slate-200 transition-colors"
           >
             <Github className="h-3.5 w-3.5" />
             <span className="text-[11px] font-medium">Repo</span>

@@ -44,6 +44,33 @@ export interface RecruiterDemoPrompt {
   description: string;
 }
 
+export interface DataSourceInfo {
+  id: string;
+  name: string;
+  dialect: string;
+  tables_indexed: number;
+  last_synced_at?: string;
+  created_at: string;
+}
+
+export interface DataSourceTestResult {
+  success: boolean;
+  latency_ms: number;
+  tables_found: string[];
+  tables_count: number;
+  dialect: string;
+  message: string;
+}
+
+export interface DataSourceSchemaInfo {
+  datasource_id: string;
+  name: string;
+  dialect: string;
+  tables_indexed: number;
+  last_synced_at?: string;
+  table_cards: string[];
+}
+
 export const RECRUITER_DEMO_PROMPTS: RecruiterDemoPrompt[] = [
   {
     id: "demo-complex-analytics",
@@ -388,4 +415,112 @@ LIMIT 500;`;
     },
     summary: "Observed continuous chronological revenue expansion over the past 6 months led by enterprise customer acquisition in the US and India.",
   });
+}
+
+/**
+ * Fetch all registered external databases.
+ */
+export async function fetchDataSources(): Promise<DataSourceInfo[]> {
+  try {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const res = await fetch(`${apiBase}/datasources`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn("Could not fetch datasources from backend; using default fallback.", err);
+  }
+  return [
+    {
+      id: "default-demo-db",
+      name: "Demo SaaS & E-Commerce DB",
+      dialect: "postgresql",
+      tables_indexed: 5,
+      created_at: new Date().toISOString(),
+    },
+  ];
+}
+
+/**
+ * Probe connection and discover tables against a user-provided database URL in strictly read-only mode.
+ */
+export async function testDatabaseConnection(payload: {
+  name?: string;
+  connection_uri: string;
+  dialect?: string;
+}): Promise<DataSourceTestResult> {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const res = await fetch(`${apiBase}/datasources/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Connection test request failed." }));
+    throw new Error(err.detail || "Connection test failed.");
+  }
+  return await res.json();
+}
+
+/**
+ * Register a new external database and initiate automatic schema RAG vectorization.
+ */
+export async function createDataSource(payload: {
+  name: string;
+  connection_uri: string;
+  dialect: string;
+}): Promise<DataSourceInfo> {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const res = await fetch(`${apiBase}/datasources`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Database registration failed." }));
+    throw new Error(err.detail || "Failed to register database.");
+  }
+  return await res.json();
+}
+
+/**
+ * Delete a registered data source.
+ */
+export async function deleteDataSource(datasourceId: string): Promise<void> {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const res = await fetch(`${apiBase}/datasources/${datasourceId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Failed to delete data source." }));
+    throw new Error(err.detail || "Failed to delete data source.");
+  }
+}
+
+/**
+ * Retrieve discovered schema markdown cards for a data source.
+ */
+export async function getDataSourceSchema(datasourceId: string): Promise<DataSourceSchemaInfo> {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const res = await fetch(`${apiBase}/datasources/${datasourceId}/schema`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Failed to fetch schema." }));
+    throw new Error(err.detail || "Failed to fetch schema.");
+  }
+  return await res.json();
+}
+
+/**
+ * Force resync of schema introspection and ChromaDB vector store.
+ */
+export async function syncDataSourceSchema(datasourceId: string): Promise<DataSourceInfo> {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const res = await fetch(`${apiBase}/datasources/${datasourceId}/sync`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Failed to sync schema." }));
+    throw new Error(err.detail || "Failed to sync schema.");
+  }
+  return await res.json();
 }
