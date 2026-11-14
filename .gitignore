@@ -40,6 +40,7 @@ venv.bak/
 chroma_db/
 test_chroma_db/
 *.db
+*.sqlite
 *.sqlite3
 *.duckdb
 

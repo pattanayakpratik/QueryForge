@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field, ConfigDict, field_validator
+from app.core.uri_utils import validate_ssrf_and_scheme, normalize_database_uri
 
 
 class DataSourceCreate(BaseModel):
@@ -15,12 +16,25 @@ class DataSourceCreate(BaseModel):
     @classmethod
     def validate_connection_scheme(cls, v: str) -> str:
         clean = v.strip()
-        allowed = ("postgresql+asyncpg://", "postgresql://", "sqlite+aiosqlite://", "sqlite://")
-        if not any(clean.lower().startswith(s) for s in allowed):
-            raise ValueError(
-                f"Invalid connection URI scheme. Must start with one of: {', '.join(allowed)}"
-            )
+        validate_ssrf_and_scheme(clean)
         return clean
+
+
+class DataSourceTestRequest(BaseModel):
+    """Payload to test read-only connection and table discovery on an external database."""
+    name: Optional[str] = "Database Probe"
+    dialect: Optional[str] = None
+    connection_uri: str = Field(..., description="Target database connection string to probe")
+
+
+class DataSourceTestResponse(BaseModel):
+    """Result of read-only connection test probe."""
+    success: bool
+    latency_ms: float
+    tables_found: List[str] = []
+    tables_count: int = 0
+    dialect: str
+    message: str
 
 
 class DataSourceResponse(BaseModel):

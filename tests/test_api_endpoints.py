@@ -77,6 +77,28 @@ class TestAPIEndpoints(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_res.status_code, 200)
         self.assertEqual(get_res.json()["name"], "Analytics Warehouse")
 
+        # DELETE /datasources/{id}
+        del_res = await self.client.delete(f"/datasources/{ds_id}")
+        self.assertEqual(del_res.status_code, 204)
+
+        # Safeguard default-demo-db deletion
+        del_default = await self.client.delete("/datasources/default-demo-db")
+        self.assertEqual(del_default.status_code, 400)
+
+    async def test_datasource_test_probe_endpoint(self):
+        """POST /datasources/test verifies connection probe and table discovery."""
+        test_probe_payload = {
+            "name": "Local SQLite Probe",
+            "dialect": "sqlite",
+            "connection_uri": "sqlite+aiosqlite:///:memory:",
+        }
+        res = await self.client.post("/datasources/test", json=test_probe_payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["dialect"], "sqlite")
+        self.assertIn("latency_ms", data)
+
     async def test_golden_queries_crud(self):
         """Verify adding and retrieving golden few-shot query pairs."""
         # Create datasource first

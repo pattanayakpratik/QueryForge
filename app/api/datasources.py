@@ -1,4 +1,4 @@
-"""Data source registration and schema introspection endpoints."""
+"""Data source registration, connection probing, and schema introspection endpoints."""
 
 from datetime import datetime, timezone
 from typing import List, Dict, Any
@@ -7,11 +7,46 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_metadata_db, encrypt_connection_uri, decrypt_connection_uri
 from app.models.metadata import DataSource
-from app.schemas.metadata import DataSourceCreate, DataSourceResponse
+from app.schemas.metadata import (
+    DataSourceCreate,
+    DataSourceResponse,
+    DataSourceTestRequest,
+    DataSourceTestResponse,
+)
 from app.core.schema_indexer import SchemaIndexer
+from app.core.uri_utils import normalize_database_uri, test_database_connection_readonly
 
 router = APIRouter()
 schema_indexer = SchemaIndexer()
+
+
+@router.post("/test", response_model=DataSourceTestResponse)
+async def test_datasource_connection(
+    payload: DataSourceTestRequest,
+) -> DataSourceTestResponse:
+    """Test read-only connectivity and table discovery against an external database URL."""
+    try:
+        res = await test_database_connection_readonly(
+            connection_uri=payload.connection_uri,
+            dialect=payload.dialect,
+        )
+        return DataSourceTestResponse(
+            success=res["success"],
+            latency_ms=res["latency_ms"],
+            tables_found=res["tables_found"],
+            tables_count=res["tables_count"],
+            dialect=res["dialect"],
+            message=res["message"],
+        )
+    except Exception as exc:
+        return DataSourceTestResponse(
+            success=False,
+            latency_ms=0.0,
+            tables_found=[],
+            tables_count=0,
+            dialect=payload.dialect or "unknown",
+            message=f"Validation failed: {str(exc)}",
+        )
 
 
 @router.post("", response_model=DataSourceResponse, status_code=status.HTTP_201_CREATED)
@@ -28,12 +63,15 @@ async def register_datasource(
             detail=f"Data source with name '{payload.name}' already exists.",
         )
 
+    # Normalize URI and infer dialect
+    normalized_uri, dialect = normalize_database_uri(payload.connection_uri, payload.dialect)
+
     # Encrypt connection string for secure at-rest storage
-    encrypted_uri = encrypt_connection_uri(payload.connection_uri)
+    encrypted_uri = encrypt_connection_uri(normalized_uri)
 
     datasource = DataSource(
         name=payload.name,
-        dialect=payload.dialect,
+        dialect=dialect,
         connection_uri_encrypted=encrypted_uri,
         tables_indexed=0,
     )
@@ -45,14 +83,14 @@ async def register_datasource(
     try:
         indexed_count = await schema_indexer.index_datasource(
             datasource_id=datasource.id,
-            connection_uri=payload.connection_uri,
-            dialect=payload.dialect,
+            connection_uri=normalized_uri,
+            dialect=dialect,
         )
         datasource.tables_indexed = indexed_count
         datasource.last_synced_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(datasource)
-    except Exception as exc:
+    except Exception:
         # Retain registered datasource even if target DB is temporarily unreachable
         pass
 
@@ -85,6 +123,64 @@ async def get_datasource(
     return DataSourceResponse.model_validate(ds)
 
 
+@router.delete("/{datasource_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_datasource(
+    datasource_id: str,
+    db: AsyncSession = Depends(get_metadata_db),
+) -> None:
+    """Delete a registered data source and clean up its metadata."""
+    if datasource_id == "default-demo-db":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete the default demo database.",
+        )
+
+    result = await db.execute(select(DataSource).where(DataSource.id == datasource_id))
+    ds = result.scalar_one_or_none()
+    if not ds:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Data source with ID '{datasource_id}' not found.",
+        )
+
+    await db.delete(ds)
+    await db.commit()
+
+
+@router.post("/{datasource_id}/sync", response_model=DataSourceResponse)
+async def sync_datasource_schema(
+    datasource_id: str,
+    db: AsyncSession = Depends(get_metadata_db),
+) -> DataSourceResponse:
+    """Force re-introspection of database catalog and update ChromaDB vector store."""
+    result = await db.execute(select(DataSource).where(DataSource.id == datasource_id))
+    ds = result.scalar_one_or_none()
+    if not ds:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Data source with ID '{datasource_id}' not found.",
+        )
+
+    target_uri = decrypt_connection_uri(ds.connection_uri_encrypted)
+    try:
+        indexed_count = await schema_indexer.index_datasource(
+            datasource_id=ds.id,
+            connection_uri=target_uri,
+            dialect=ds.dialect,
+        )
+        ds.tables_indexed = indexed_count
+        ds.last_synced_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(ds)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to synchronize schema from target database: {str(exc)}",
+        )
+
+    return DataSourceResponse.model_validate(ds)
+
+
 @router.get("/{datasource_id}/schema", response_model=Dict[str, Any])
 async def get_datasource_schema(
     datasource_id: str,
@@ -100,7 +196,7 @@ async def get_datasource_schema(
         )
 
     # Retrieve table cards
-    cards = schema_indexer.retrieve_relevant_tables(datasource_id, query="", top_k=20)
+    cards = schema_indexer.retrieve_relevant_tables(datasource_id, query="", top_k=50)
 
     return {
         "datasource_id": ds.id,
