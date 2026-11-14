@@ -38,7 +38,7 @@ export function CommandBar({ onSearch, isLoading }: CommandBarProps) {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Ask any natural language question (e.g. 'Show total revenue and refund rate by country for last 6 months')..."
+          placeholder="Ask any natural language question on your active schema (e.g. sales, patients, transactions, employees)..."
           className="w-full bg-transparent px-3 py-2.5 text-sm sm:text-base text-white placeholder-slate-500 focus:outline-none"
           disabled={isLoading}
         />

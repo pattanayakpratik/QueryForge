@@ -173,7 +173,13 @@ class LLMRouter:
                 "GROUP BY c.country ORDER BY total_revenue DESC LIMIT 5;"
             )
         else:
-            mock_sql = "SELECT 1;"
+            # Domain-agnostic fallback: reflect first available table from schema context
+            table_match = re.search(r"### Table:\s*(\w+)", prompt)
+            if table_match:
+                table_name = table_match.group(1)
+                mock_sql = f"SELECT * FROM {table_name} LIMIT 50;"
+            else:
+                mock_sql = "SELECT 1;"
 
         return LLMResult(
             content=mock_sql,

@@ -196,11 +196,16 @@ class AgentLoop:
         target_engine = get_target_engine(connection_uri)
         is_sqlite = "sqlite" in dialect.lower() or "sqlite" in connection_uri.lower()
 
+        if mode == "read_write":
+            task_instruction = "Generate a single, precise SQL query (SELECT, INSERT, UPDATE, or DELETE) to fulfill the user's request based strictly on the provided database schema."
+        else:
+            task_instruction = "Generate a single, precise, read-only SQL SELECT query to answer the user's question based strictly on the provided database schema."
+
         conversation_history: List[str] = [
             f"User Question: {question}\n\n"
             f"Database Schema:\n{schema_context}\n\n"
             f"{golden_context}\n\n"
-            f"Generate a single, precise, read-only SQL SELECT query to answer the user's question."
+            f"{task_instruction}"
         ]
 
         while attempt < max_attempts:
