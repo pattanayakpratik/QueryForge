@@ -163,6 +163,12 @@ class LLMRouter:
                     )
                 else:
                     mock_sql = "SELECT id, user_total_rev FROM customers LIMIT 5;"
+            elif any(k in lower_prompt for k in ["people", "person", "customer", "user", "who", "client"]):
+                mock_sql = (
+                    "SELECT c.name AS customer_name, SUM(o.total_amount_cents)/100.0 AS total_revenue "
+                    "FROM customers c JOIN orders o ON c.id = o.customer_id "
+                    "GROUP BY c.id, c.name ORDER BY total_revenue DESC LIMIT 5;"
+                )
             elif "refund" in lower_prompt or "revenue" in lower_prompt or "monthly" in lower_prompt:
                 mock_sql = (
                     "SELECT c.country, COUNT(DISTINCT o.id) AS total_orders, "
