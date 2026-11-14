@@ -167,6 +167,25 @@ class TestAPIEndpoints(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.status_code, 404)
         self.assertIn("does not exist", res.json()["detail"])
 
+    async def test_query_confirm_mutation_execution(self):
+        """POST /query/confirm executes a human-confirmed mutation and commits it."""
+        confirm_payload = {
+            "datasource_id": "default-demo-db",
+            "sql": "CREATE TABLE IF NOT EXISTS temp_confirmation_test (id INT PRIMARY KEY);",
+        }
+        res = await self.client.post("/query/confirm", json=confirm_payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "MUTATION_COMMITTED")
+        self.assertEqual(data["action_type"], "CREATE")
+
+        # Clean up temporary test table so it doesn't leak into subsequent test suites
+        drop_payload = {
+            "datasource_id": "default-demo-db",
+            "sql": "DROP TABLE IF EXISTS temp_confirmation_test;",
+        }
+        await self.client.post("/query/confirm", json=drop_payload)
+
 
 if __name__ == "__main__":
     unittest.main()

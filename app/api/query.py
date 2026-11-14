@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_metadata_db, decrypt_connection_uri, encrypt_connection_uri
 from app.models.metadata import DataSource, QueryAuditLog
-from app.schemas.metadata import QueryAskRequest, QueryAskResponse
+from app.schemas.metadata import (
+    QueryAskRequest,
+    QueryAskResponse,
+    MutationConfirmRequest,
+    MutationConfirmResponse,
+)
 from app.core.agent_loop import AgentLoop, AgentExecutionResult
 
 logger = logging.getLogger(__name__)
@@ -71,6 +76,7 @@ async def ask_query(
         question=payload.question,
         connection_uri=target_uri,
         dialect=ds.dialect,
+        mode=payload.mode,
     )
 
     # Persist execution telemetry to internal audit logs
@@ -117,9 +123,11 @@ async def ask_query(
         explain_cost=result.explain_cost,
         provider_used=result.provider_used,
         self_heal_attempts=result.self_heal_attempts,
-        status="SUCCESS",
+        status=result.status,
         chart_config=result.chart_config,
         summary=result.summary,
+        requires_confirmation=result.requires_confirmation,
+        mutation_impact=result.mutation_impact,
     )
 
 
@@ -154,6 +162,7 @@ async def stream_query_execution(
             question=payload.question,
             connection_uri=target_uri,
             dialect=ds.dialect,
+            mode=payload.mode,
         ):
             event_json = json.dumps(event.model_dump(), default=str)
             yield f"data: {event_json}\n\n"
@@ -167,3 +176,49 @@ async def stream_query_execution(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/confirm", response_model=MutationConfirmResponse)
+async def confirm_mutation_execution(
+    payload: MutationConfirmRequest,
+    db: AsyncSession = Depends(get_metadata_db),
+) -> MutationConfirmResponse:
+    """Execute a human-confirmed mutation query and commit changes to the target database."""
+    ds = await _get_or_create_datasource(db, payload.datasource_id)
+    if not ds:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Data source '{payload.datasource_id}' does not exist.",
+        )
+
+    target_uri = decrypt_connection_uri(ds.connection_uri_encrypted)
+    try:
+        result = await agent_loop.execute_confirmed_mutation(
+            datasource_id=ds.id,
+            connection_uri=target_uri,
+            dialect=ds.dialect,
+            sql=payload.sql,
+        )
+
+        # Audit log for confirmed mutation
+        audit_entry = QueryAuditLog(
+            datasource_id=ds.id,
+            user_question="[HUMAN CONFIRMED MUTATION]",
+            generated_sql=result["sql"],
+            self_heal_attempts=0,
+            error_history=[],
+            explain_cost=None,
+            execution_time_ms=result["execution_time_ms"],
+            row_count=result.get("rows_affected", 0),
+            provider_used="USER_CONFIRMED",
+            status="MUTATION_COMMITTED",
+        )
+        db.add(audit_entry)
+        await db.commit()
+
+        return MutationConfirmResponse(**result)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to execute confirmed mutation: {str(exc)}",
+        )
